@@ -1,0 +1,13 @@
+{
+  "name": "rafo-flow",
+  "owner": { "name": "Rafo", "email": "acessos@nuture.com.br" },
+  "metadata": {
+    "description": "Rafo's personal Claude Code marketplace — reusable dev workflow plugins (Shape Up agent fleet + methodology skills)."
+  },
+  "plugins": [
+    {
+      "name": "shapeup",
+      "source": "./plugins/shapeup"
+    }
+  ]
+}
