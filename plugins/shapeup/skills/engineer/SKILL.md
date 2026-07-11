@@ -17,24 +17,31 @@ Write code like a senior engineer who values simplicity over cleverness. Every d
 ## Design Principles (in priority order)
 
 ### 1. YAGNI — You Aren't Gonna Need It
+
 Don't build what you don't need. 64% of features are rarely or never used.
+
 - No premature abstractions
 - No "what if we need to..." — build it when you need it
 - Hardcode over configure. You can make it dynamic later. You probably won't.
 
 ### 2. KISS — The Boring, Obvious Solution
+
 If a reviewer can't understand a function in 30 seconds, it's too complex.
+
 - Prefer explicit over clever
 - Readable code that's slightly longer beats terse code that requires mental gymnastics
 - Boring technology over exciting technology. Pick what you know.
 
 ### 3. DRY — About Knowledge, Not Text
+
 Two functions that look identical but serve different domains should NOT be merged.
+
 - Ask: "Will these always change together?" If no, let them be duplicated.
 - Rule of Three: duplicate twice, abstract on the third IF it still makes sense.
 - The cost of a wrong abstraction > the cost of some duplication.
 
 ### 4. From SOLID, Use S and D
+
 - **Single Responsibility**: Each module has one reason to change
 - **Dependency Inversion**: Depend on abstractions, not concretions
 - The other three: apply when they clearly help, don't force them.
@@ -57,10 +64,33 @@ Two functions that look identical but serve different domains should NOT be merg
 - **Surface uncertainty.** When multiple valid approaches exist, state trade-offs and ask.
 - **Verify after changing.** Build, test, check types. Not done until it compiles and tests pass.
 
+## Testing: Unit vs Seam
+
+The dangerous bugs live _between_ components, not inside them. A mock tests your **decision** ("what do I do if the response is empty?"). An integration test tests the **contract** ("what does the other side _actually_ send?"). A seam bug passes every check when both sides are mocked consistently-but-wrong.
+
+- Unit-test the logic — pure functions, decisions, edge cases. Fast, and the bulk of your tests.
+- For every critical boundary (adapter ↔ external API, queue ↔ consumer, cache ↔ materialization, DB write ↔ read), write at least **one** integration test with the _real_ component — real DB, a recorded real payload. A mock that returns "the contract you wish for" lies.
+- Bug fix ⟹ regression test: reproduce the bug (fails before the fix, passes after). No fix ships without the test that would have caught it.
+
+## Iterate Until Green
+
+The project's gate (typecheck + lint + build + tests) is not a checkpoint you hope to clear — it's your iteration loop. Implement → run → fail → fix the **cause** → repeat, until green.
+
+- NEVER end a turn on red saying "almost done". Red tests, broken types, or a live mutant in business logic = not done.
+- When the gate blocks, fix the cause. Never route around it — no `--skip`, no disabling the rule, no deleting the failing test, no `--dry-run` to "pass".
+
+## You Own the Doc
+
+The agent that writes the code owns the docs the change makes untrue. Updating them is part of _this_ task, not a "later" step — because later never comes (that's exactly why a gate enforces it).
+
+- Change behavior in prod ⟹ write the changelog fragment in the same change.
+- Change a schema, a domain event, or a public contract ⟹ update the doc (and any machine-readable catalog) in the same change.
+- A durable doc whose truth you changed gets its `reviewed` date bumped **only** when you actually re-checked it against the code — not just because you touched the file.
+
 ## Blast Radius Awareness
 
 | Risk level | What | Action |
-|-----------|------|--------|
+| --- | --- | --- |
 | HIGH | Auth, data persistence, payments, shared utilities | Flag risk, extra review, test edge cases |
 | MEDIUM | New features, UI changes, API endpoints | Normal care, test happy + error paths |
 | LOW | Internal tools, logging, comments, docs | Just do it |

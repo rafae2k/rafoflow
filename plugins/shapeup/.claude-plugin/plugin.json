@@ -1,6 +1,6 @@
 {
   "name": "shapeup",
-  "description": "Generic Shape Up workflow: shape → bet → scope → build → ship, with an autonomous agent fleet (shaper, product-strategist, engineer, debugger, reviewer, researcher, closer) and inline methodology skills.",
+  "description": "Generic Shape Up workflow: shape → bet → scope → build → ship, with an autonomous agent fleet (shaper, product-strategist, engineer, debugger, reviewer, researcher, closer) and inline methodology skills. Drive each step by hand or orchestrate the whole loop with /cycle.",
   "author": { "name": "Rafo" },
   "keywords": ["shape-up", "workflow", "agents", "37signals", "product"]
 }

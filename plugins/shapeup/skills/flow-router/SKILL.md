@@ -14,7 +14,7 @@ A 37signals-inspired team of autonomous agents and inline skills for building pr
 ## Agents (autonomous workers — spawn them, they come back with results)
 
 | Agent | What it does | Invoke |
-|---|---|---|
+| --- | --- | --- |
 | `@shaper` | Raw idea → shaped pitch with appetite | `@shaper "offline workout tracking"` |
 | `@product-strategist` | Build/kill/defer decisions | `@product-strategist "should we add social features?"` |
 | `@engineer` | Build a scoped task end-to-end | `@engineer "implement the readiness card"` |
@@ -26,7 +26,8 @@ A 37signals-inspired team of autonomous agents and inline skills for building pr
 ## Skills (inline methodology — slash commands in the current conversation)
 
 | Skill | What it does | Invoke |
-|---|---|---|
+| --- | --- | --- |
+| `/cycle` | Run the whole loop, orchestrated — artifacts + 2 checkpoints | `/cycle "add offline sync"` |
 | `/shape` | Shape an idea into a pitch | `/shape offline workout tracking` |
 | `/bet` | Evaluate a pitch: build, kill, reshape | `/bet` (after a pitch) |
 | `/scope` | Break a pitch into buildable scopes | `/scope` (after betting) |
@@ -46,7 +47,7 @@ A 37signals-inspired team of autonomous agents and inline skills for building pr
 ### Agent vs Skill
 
 | Use an **agent** when... | Use a **skill** when... |
-|---|---|
+| --- | --- |
 | You want autonomous work in isolated context | You want methodology applied in this conversation |
 | The task needs multi-step research or building | You need a checklist or output template |
 | You want it running in the background | You want to guide the work step by step |
@@ -78,6 +79,9 @@ A 37signals-inspired team of autonomous agents and inline skills for building pr
 
 "Ready to release"
   → @closer (checklist + launch copy)
+
+"Just run the whole thing for me"
+  → /cycle (orchestrates research → ship, pausing only at the bet and the ship)
 ```
 
 ---
@@ -95,6 +99,8 @@ A 37signals-inspired team of autonomous agents and inline skills for building pr
 6. /ship          → pre-ship checklist
 7. @closer        → launch / release copy
 ```
+
+> `/cycle` runs this entire sequence for you — with a persistent artifact trail (`docs/cycles/NN/`) and exactly two human pauses (the bet, the ship). Use the steps above when you want to drive each one by hand; use `/cycle` when you want it orchestrated.
 
 ### Quick fix
 
@@ -125,4 +131,4 @@ This plugin ships only the **generic** fleet. A project can add its own speciali
 2. **Honesty anchors.** Every agent will say "I don't know" or "this failed" instead of fabricating success.
 3. **Circuit breakers.** Agents stop and escalate when stuck, not spin forever.
 4. **Read before acting.** Every agent reads existing code/docs before proposing changes.
-5. **No orchestrator.** You are the decision-maker. Agents are specialists you call on.
+5. **No orchestrator — with one opt-in exception.** By default you are the decision-maker and agents are specialists you call on. When you want the whole loop driven for you, `/cycle` orchestrates it, still handing the two real decisions (direction, ship) back to you.

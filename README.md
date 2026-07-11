@@ -9,7 +9,9 @@ Personal Claude Code marketplace. Reusable dev workflow packaged as plugins.
 A 37signals / Shape Up workflow — fixed time, variable scope. Autonomous agent fleet + inline methodology skills, usable in any project.
 
 - **Agents:** `shaper`, `product-strategist`, `engineer`, `debugger`, `reviewer`, `researcher`, `closer`
-- **Skills:** `shape`, `bet`, `scope`, `cut`, `ship`, `review`, `engineer`, `debug`, `market-research`, `flow-router`
+- **Skills:** `cycle`, `shape`, `bet`, `scope`, `cut`, `ship`, `review`, `engineer`, `debug`, `market-research`, `flow-router`
+
+`/cycle` orchestrates the whole loop (research → ship) with a persistent artifact trail and two human checkpoints; the rest are the methods you can also drive by hand.
 
 ## Install (in any project)
 

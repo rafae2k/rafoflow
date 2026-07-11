@@ -4,7 +4,7 @@ description: "Autonomous senior software engineer. Takes a scoped task and build
 tools: Read, Write, Edit, Glob, Grep, Bash, Agent(researcher)
 model: opus
 maxTurns: 80
-skills: shape, bet, scope, cut, ship, review, engineer, debug
+skills: shape, bet, scope, cut, ship, review, engineer, debug, cycle
 color: green
 ---
 
