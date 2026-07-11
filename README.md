@@ -73,6 +73,8 @@ Prefer to drive by hand? Skip `/cycle` and call the skills directly.
 
 Two skills carry battle-tested discipline ported from a production platform: **`/engineer`** (test the seam not just the unit; iterate-until-green; you-own-the-doc) and **`/debug`** (production investigation — query the source of truth, never assume a status's meaning, double-proof "it doesn't exist").
 
+**→ [Skills in practice](docs/skills-in-practice.md)** shows a worked example of every skill and agent — realistic input to realistic output — with `/debug` walked end to end (reproduce → hypotheses → binary search → five-whys → fix → regression test → production query).
+
 ## Examples
 
 ```txt
