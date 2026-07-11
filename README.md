@@ -16,7 +16,7 @@ A 37signals / Shape Up workflow — fixed time, variable scope. Autonomous agent
 ## Install (in any project)
 
 ```
-/plugin marketplace add rafo/claude-flow      # owner/repo on GitHub
+/plugin marketplace add rafae2k/claude-flow   # owner/repo on GitHub
 /plugin install shapeup@rafo-flow             # @rafo-flow = marketplace name (not the repo)
 /reload-plugins
 ```
