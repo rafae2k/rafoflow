@@ -1,0 +1,7 @@
+allowBuilds:
+  esbuild: true
+  # promptfoo optional extras we do not use (browser red-teaming, local embeddings).
+  "@playwright/browser-chromium": false
+  "@swc/core": false
+  onnxruntime-node: false
+  protobufjs: false

@@ -1,0 +1,20 @@
+{
+  "description": "Three seeded defects, each violating one invariant in AGENTS.md. The missing guard is also covered by an existing test, so the gate fails until it is fixed.",
+  "defects": [
+    {
+      "id": "missing-webhook-guard",
+      "file": "src/reminder.js",
+      "keywords": ["webhookurl", "webhook url", "undefined", "not configured", "missing configuration", "guard"]
+    },
+    {
+      "id": "fabricated-next-charge",
+      "file": "src/reminder.js",
+      "keywords": ["next_charge_at", "nextchargeat", "invent", "fabricat", "new date", "now"]
+    },
+    {
+      "id": "monthly-dedup-key",
+      "file": "src/reminder.js",
+      "keywords": ["month", "slice(0, 7)", "per day", "daily", "calendar day", "dedup"]
+    }
+  ]
+}

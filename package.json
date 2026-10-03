@@ -1,0 +1,39 @@
+{
+  "name": "rafoflow",
+  "version": "0.1.0",
+  "description": "A shareable, customizable development process for coding agents — same process across Claude Code, Codex and Pi.",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "rafoflow": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "prompts",
+    "schemas",
+    "skills",
+    "templates"
+  ],
+  "engines": {
+    "node": ">=22.6"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "eval:classifier": "promptfoo eval -c evals/classifier/promptfooconfig.yaml --no-cache",
+    "eval:reviewer": "promptfoo eval -c evals/reviewer/promptfooconfig.yaml --no-cache",
+    "eval:routing": "promptfoo eval -c evals/routing/promptfooconfig.yaml --no-cache"
+  },
+  "dependencies": {
+    "yaml": "^2.8.0",
+    "zod": "^4.1.0"
+  },
+  "devDependencies": {
+    "@openai/codex-sdk": "^0.160.0",
+    "@types/node": "^24.0.0",
+    "promptfoo": "^0.123.1",
+    "typescript": "^5.9.0",
+    "vitest": "^3.2.0"
+  }
+}

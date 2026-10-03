@@ -1,0 +1,28 @@
+# Does the reviewer find the seeded defects without noise? One review round, no fixing.
+# Run: pnpm build && pnpm eval:reviewer
+description: rafoflow reviewer — recall and noise on seeded defects
+
+prompts:
+  - "review"
+
+providers:
+  - id: file://../providers/rafoflow.mjs
+    label: reviewer/codex-medium
+    config: { role: reviewer, route: { harness: codex, effort: medium } }
+  - id: file://../providers/rafoflow.mjs
+    label: reviewer/claude-sonnet
+    config: { role: reviewer, route: { harness: claude, model: sonnet } }
+
+defaultTest:
+  assert:
+    - type: javascript
+      value: file://../lib/assert-reviewer.mjs
+      metric: recall
+    # No `cost` assertion: Codex on a ChatGPT login reports tokens, not cost, and promptfoo
+    # errors on cost assertions for providers without cost. Latency bounds both.
+    - type: latency
+      threshold: 180000
+
+tests:
+  - description: renewal reminder — 3 defects, each violating an AGENTS.md invariant
+    vars: { fixture: renewal-reminder, max_noise: 2 }

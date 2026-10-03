@@ -1,0 +1,35 @@
+# rafoflow repository contract. Everything not set here comes from the package defaults
+# (and from any preset listed in `extends`). Guardrails set by an inherited layer can be
+# tightened here, never loosened.
+
+# extends: ["@acme/rafoflow-preset"]
+
+# Harness the implementing agent runs in. Reviewers are routed to the other vendor.
+session_harness: {{harness}}
+
+# Commands this repository exposes. The process only ever calls these names.
+commands:
+  # typecheck: pnpm typecheck
+  # test: pnpm test
+  # lint: pnpm lint
+  # docs_lint: pnpm docs:lint
+
+# Which commands make up the gate, in order.
+gate: []
+
+docs:
+  paths: ["docs/", "AGENTS.md", "README.md"]
+
+# Paths whose change forces a minimum tier, whatever the classifier says.
+risk_markers: []
+#  - { path: "db/migrations/**", tier: L, reason: migration }
+#  - { path: "src/payments/**", tier: L, reason: payments }
+
+# Override the role x tier routing table (see `rafoflow doctor` for the effective table).
+# routing:
+#   fixer:
+#     M: { harness: claude, model: sonnet }
+
+# Human checkpoint before the fixer edits code, per tier.
+# checkpoints:
+#   M: { before_fix: true }

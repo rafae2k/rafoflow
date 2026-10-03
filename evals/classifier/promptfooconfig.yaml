@@ -1,0 +1,33 @@
+# Does the classifier give the right tier? Each case is a labeled request.
+# Run: pnpm build && pnpm eval:classifier
+description: rafoflow classifier — tier accuracy
+
+prompts:
+  - "{{request}}"
+
+providers:
+  - id: file://../providers/rafoflow.mjs
+    label: classifier/claude-haiku
+    config: { role: classifier, route: { harness: claude, model: haiku } }
+  - id: file://../providers/rafoflow.mjs
+    label: classifier/codex-low
+    config: { role: classifier, route: { harness: codex, effort: low } }
+
+defaultTest:
+  assert:
+    - type: javascript
+      value: |
+        const got = output.tier;
+        return { pass: got === context.vars.tier, score: got === context.vars.tier ? 1 : 0, reason: `expected ${context.vars.tier}, got ${got}: ${(output.reasons || []).join(" | ")}` };
+
+tests:
+  - vars: { tier: S, request: "Change the label of the 'Save' button on the settings page to 'Save changes'" }
+  - vars: { tier: S, request: "Sort the orders table by creation date, newest first" }
+  - vars: { tier: S, request: "Fix the typo 'recieve' in the password reset email subject" }
+  - vars: { tier: M, request: "Add a CSV export of the customers list with name, email and signup date" }
+  - vars: { tier: M, request: "Show a warning banner on the account page when the last subscription payment failed, with tests" }
+  - vars: { tier: M, request: "Add limit/offset pagination to the GET /orders API endpoint and update the client that calls it" }
+  - vars: { tier: L, request: "Migrate the orders table from float amounts to integer cents and backfill the existing rows" }
+  - vars: { tier: L, request: "Decide whether payment webhooks should be processed synchronously or through a queue, and implement it" }
+  - vars: { tier: L, request: "Add login with Google alongside the existing password login" }
+  - vars: { tier: L, request: "Make inventory reservation safe when two checkouts try to reserve the last unit at the same time" }

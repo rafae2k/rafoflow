@@ -1,0 +1,9 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["tier", "reasons"],
+  "properties": {
+    "tier": { "type": "string", "enum": ["S", "M", "L"] },
+    "reasons": { "type": "array", "items": { "type": "string" } }
+  }
+}

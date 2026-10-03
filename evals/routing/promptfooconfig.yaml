@@ -1,0 +1,41 @@
+# Does each request trigger the right rafoflow skill, and not its sibling?
+# Run: pnpm build && node evals/routing/prepare.mjs && pnpm eval:routing
+#
+# Claude Agent SDK is not included by default: Anthropic asks for API key auth for the Agent SDK.
+# With ANTHROPIC_API_KEY set, add a provider block with `id: anthropic:claude-agent-sdk`,
+# `working_dir`, `setting_sources: ['project']`, `skills: all`, read-only tools.
+description: rafoflow skill routing
+
+prompts:
+  - "{{request}}"
+
+providers:
+  - id: openai:codex-sdk
+    label: routing/codex
+    config:
+      working_dir: ../.work/routing-repo
+      sandbox_mode: read-only
+      skip_git_repo_check: true
+      enable_streaming: true
+
+tests:
+  - description: small label change → task
+    vars: { request: "Change the label of the Save button in src/settings.html to 'Save changes'." }
+    assert:
+      - { type: skill-used, value: task }
+      - { type: not-skill-used, value: feature }
+  - description: open direction → feature
+    vars: { request: "We need subscription history. Decide between an event log and snapshot tables, then build it." }
+    assert:
+      - { type: skill-used, value: feature }
+      - { type: not-skill-used, value: task }
+  - description: question to investigate → research
+    vars: { request: "Before we build anything: research how payment providers recommend handling webhook retries and idempotency." }
+    assert:
+      - { type: skill-used, value: research }
+      - { type: not-skill-used, value: task }
+  - description: localized fix → task, not feature
+    vars: { request: "Fix the typo 'recieve' in src/settings.html." }
+    assert:
+      - { type: skill-used, value: task }
+      - { type: not-skill-used, value: feature }
