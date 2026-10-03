@@ -117,13 +117,30 @@ Running automated loops on a consumer subscription login is a gray area in Anthr
 
 ## Measurement
 
-Seeded-defect scenarios (like the spike's) become the process's own test suite. `eval` runs the suite over a harness × model matrix and records defects found, rounds, time and cost.
+The package ships its own eval suite on [promptfoo](https://www.promptfoo.dev/docs/guides/evaluate-coding-agents/) instead of a bespoke runner. promptfoo already has first-party providers for the Claude Agent SDK, the OpenAI Codex SDK and the OpenCode SDK, skill-routing assertions (`skill-used`, `not-skill-used`), trajectory assertions over traces (commands run, tools used, order), disposable per-test workspaces with the agent's diff exposed to assertions, cost and latency thresholds, and repeated runs (`--repeat`) to measure variance.
+
+What the suite measures, each one as a promptfoo config in `evals/`:
+
+| Suite | Question | How it scores |
+| --- | --- | --- |
+| `routing` | Does the request trigger the right skill, and not its sibling? | `skill-used` / `not-skill-used` on positive and near-miss prompts |
+| `classifier` | Does the classifier give the right tier? | Labeled requests; exact tier match, and never below a risk-marker floor |
+| `reviewer` | Does the reviewer find the seeded defects without noise? | Recall and precision against the fixture's known defects (the spike scenario, generalized) |
+| `fixer` | Does the fixer fix without breaking? | Workspace diff plus the fixture's gate commands passing |
+| `process` | Does the agent follow the process when left alone? | Trajectory: called `rafoflow start` before editing, ran the gate, ran `rafoflow review` before claiming done |
+
+Every suite runs over a harness × model matrix (Claude Agent SDK, Codex SDK, and Pi through a custom provider), with `--repeat 3`. It runs on every change to a skill, a role prompt or the routing table, and on every model or harness change. Results feed the routing table: a model that loses on a suite does not get that role.
+
+Fixtures are small repositories with known defects and gate commands, kept in `evals/fixtures/`. Organization presets and repositories can add their own fixtures.
+
+Caveats: the Claude Agent SDK provider calls the Agent SDK, which Anthropic says should use API key authentication; the Codex SDK provider works with a Codex login or an API key. Pi has no first-party promptfoo provider; it needs a custom script provider (not yet verified).
 
 ## v0 scope
 
 In:
 
 - CLI with `init`, `classify`, `start`, `review`, `gate`, and the ledger.
+- promptfoo eval suites `classifier`, `reviewer` and `routing`, over Claude and Codex, with the spike scenario as the first fixture.
 - LLM classifier with risk-marker floors and human override.
 - Routing table per role × tier.
 - Claude Code and Codex adapters.
@@ -131,7 +148,7 @@ In:
 - Repository contract.
 - First real user: a private TypeScript monorepo already running a prose version of this process.
 
-Later: docs phase, Pi adapter, layered presets, `eval`, CI gates.
+Later: docs phase, Pi adapter, layered presets, `fixer` and `process` eval suites, CI gates.
 
 ## Open decisions
 

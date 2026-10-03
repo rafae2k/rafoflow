@@ -49,7 +49,7 @@ Summary of a research round done on 2026-09-30 (official docs, canonical referen
 
 - `claude plugin eval` checks tool use and order and compares with and without a plugin; it runs only in Claude Code. — [Plugin evals](https://code.claude.com/docs/en/plugin-evals)
 - Anthropic and OpenAI describe the same method: deterministic checks over the trace plus a rubric judge, several runs, with and without the skill. — [Demystifying evals for AI agents](https://www.anthropic.com/engineering/demystifying-evals-for-ai-agents), [Evaluating skills](https://agentskills.io/skill-creation/evaluating-skills)
-- No official tool runs the same suite across more than one harness.
+- No official tool from a model vendor runs the same suite across more than one harness. promptfoo (third party, open source) does: first-party providers for the Claude Agent SDK, the OpenAI Codex SDK and the OpenCode SDK, `skill-used` assertions, trajectory assertions over traces, disposable workspaces with the agent's diff, and `--repeat` for variance. — [Evaluate coding agents](https://www.promptfoo.dev/docs/guides/evaluate-coding-agents/), [Test agent skills](https://www.promptfoo.dev/docs/guides/test-agent-skills/)
 
 ## 8. Authentication for automation
 
