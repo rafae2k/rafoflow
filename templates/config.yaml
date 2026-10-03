@@ -4,7 +4,8 @@
 
 # extends: ["@acme/rafoflow-preset"]
 
-# Harness the implementing agent runs in. Reviewers are routed to the other vendor.
+# Harness the implementing agent runs in (claude, codex or pi). Reviewers are routed to another vendor.
+# For pi, also set session_provider (e.g. openai-codex).
 session_harness: {{harness}}
 
 # Commands this repository exposes. The process only ever calls these names.

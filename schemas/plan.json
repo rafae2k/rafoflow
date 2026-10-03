@@ -1,0 +1,39 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["direction", "why", "alternatives", "steps", "exit_criteria", "risks", "outcome", "open_question"],
+  "properties": {
+    "direction": { "type": "string" },
+    "why": { "type": "string" },
+    "alternatives": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["option", "why_rejected"],
+        "properties": { "option": { "type": "string" }, "why_rejected": { "type": "string" } }
+      }
+    },
+    "steps": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["action", "files"],
+        "properties": { "action": { "type": "string" }, "files": { "type": "array", "items": { "type": "string" } } }
+      }
+    },
+    "exit_criteria": { "type": "array", "items": { "type": "string" } },
+    "risks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["risk", "containment"],
+        "properties": { "risk": { "type": "string" }, "containment": { "type": "string" } }
+      }
+    },
+    "outcome": { "type": "string", "enum": ["done", "needs_poc", "blocked"] },
+    "open_question": { "type": "string" }
+  }
+}

@@ -3,14 +3,25 @@ export const TIERS: readonly Tier[] = ["S", "M", "L"];
 export const tierRank = (t: Tier): number => TIERS.indexOf(t);
 export const maxTier = (a: Tier, b: Tier): Tier => (tierRank(a) >= tierRank(b) ? a : b);
 
-export type Harness = "claude" | "codex";
-export type Role = "classifier" | "reviewer" | "fixer";
+export type Harness = "claude" | "codex" | "pi";
+export type Role = "classifier" | "researcher" | "planner" | "reviewer" | "fixer" | "doc_gardener";
 
-/** Where a role runs. `model`/`effort` left out means the harness default. */
+/** Where a role runs. `model`/`effort` left out means the harness default. `provider` is used by Pi. */
 export interface Route {
   harness: Harness;
+  provider?: string;
   model?: string;
   effort?: "low" | "medium" | "high";
+}
+
+/** The company behind the model, which is what the cross-vendor review rule is about. */
+export function vendorOf(route: Pick<Route, "harness" | "provider">): string {
+  if (route.harness === "claude") return "anthropic";
+  if (route.harness === "codex") return "openai";
+  const p = (route.provider ?? "").toLowerCase();
+  if (p.includes("anthropic") || p.includes("claude")) return "anthropic";
+  if (p.includes("openai") || p.includes("codex")) return "openai";
+  return p || "unknown";
 }
 
 export type Severity = "blocker" | "major" | "minor";

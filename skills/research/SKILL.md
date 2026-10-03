@@ -7,6 +7,8 @@ description: Investigate a question before deciding or building — how somethin
 
 Answer one to three explicit questions with evidence. Do not change product code.
 
+Prefer `rafoflow research "<question>" ["<question>" ...]`: it runs the researcher role with web access, enforces the source levels below, and writes `.rafoflow/work/<id>/research.md`. Do the research yourself only when the CLI is not available.
+
 ## Sources, in order of trust
 
 1. Official docs, specs and the code itself. For API or platform behavior, the only acceptable source.

@@ -1,0 +1,36 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["answers", "unverified", "outcome", "open_question"],
+  "properties": {
+    "answers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["question", "answer", "confidence", "evidence"],
+        "properties": {
+          "question": { "type": "string" },
+          "answer": { "type": "string" },
+          "confidence": { "type": "string", "enum": ["high", "medium", "low"] },
+          "evidence": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["source", "level", "ref"],
+              "properties": {
+                "source": { "type": "string" },
+                "level": { "type": "integer", "minimum": 1, "maximum": 4 },
+                "ref": { "type": "string" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "unverified": { "type": "array", "items": { "type": "string" } },
+    "outcome": { "type": "string", "enum": ["done", "needs_poc", "blocked"] },
+    "open_question": { "type": "string" }
+  }
+}

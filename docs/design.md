@@ -148,7 +148,9 @@ In:
 - Repository contract.
 - First real user: a private TypeScript monorepo already running a prose version of this process.
 
-Later: docs phase, Pi adapter, layered presets, `fixer` and `process` eval suites, CI gates.
+Done after v0: docs phase (`rafoflow docs`), Pi adapter, researcher and planner roles (`rafoflow research`, `rafoflow plan`), CI gate workflow (`rafoflow ci`).
+
+Later: `fixer` and `process` eval suites, eval suites for research/plan/docs, published npm package, `update` command.
 
 ## Open decisions
 

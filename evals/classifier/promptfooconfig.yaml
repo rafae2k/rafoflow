@@ -12,6 +12,9 @@ providers:
   - id: file://../providers/rafoflow.mjs
     label: classifier/codex-low
     config: { role: classifier, route: { harness: codex, effort: low } }
+  - id: file://../providers/rafoflow.mjs
+    label: classifier/pi-openai
+    config: { role: classifier, route: { harness: pi, provider: openai-codex, model: gpt-6-sol, effort: low } }
 
 defaultTest:
   assert:

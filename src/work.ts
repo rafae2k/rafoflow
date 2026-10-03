@@ -8,9 +8,11 @@ export interface WorkState {
   request: string;
   created_at: string;
   classification?: Classification & { overridden_by_human?: boolean };
-  phase: "classified" | "started" | "reviewing" | "reviewed";
+  phase: "classified" | "started" | "researched" | "planned" | "reviewing" | "reviewed" | "documented";
   last_outcome?: Outcome | ReviewOutcome;
   open_question?: string;
+  /** Recorded by `rafoflow approve <what>`, which a human runs after reading the artifact. */
+  approvals?: { what: string; at: string; note?: string }[];
 }
 
 export const slugify = (s: string): string =>

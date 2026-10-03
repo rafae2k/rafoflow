@@ -12,6 +12,7 @@ The guarantees live in the `rafoflow` CLI. Run the commands; do not replace them
 3. Make the change and the test that covers it.
 4. Gate: `rafoflow gate`. Fix until it is green.
 5. Review: `rafoflow review`. It runs reviewers from another vendor and fixes until convergence.
-6. Report the outcome the CLI printed. If it escalated, show the remaining findings to the user and stop.
+6. Docs: `rafoflow docs`. It updates or justifies every doc that references what changed.
+7. Report the outcome the CLI printed. If it escalated, show the remaining findings to the user and stop.
 
 If you hit a question you cannot answer from the code: `rafoflow block "<question>"` and stop.

@@ -5,25 +5,39 @@ import { parse } from "yaml";
 import { z } from "zod";
 
 const tier = z.enum(["S", "M", "L"]);
-const route = z.object({
-  harness: z.enum(["claude", "codex"]),
-  model: z.string().optional(),
-  effort: z.enum(["low", "medium", "high"]).optional(),
-});
+const harness = z.enum(["claude", "codex", "pi"]);
+const route = z
+  .object({
+    harness,
+    provider: z.string().optional(),
+    model: z.string().optional(),
+    effort: z.enum(["low", "medium", "high"]).optional(),
+  })
+  .refine((r) => r.harness !== "pi" || (r.provider && r.model), { message: "a pi route needs both provider and model" });
 const routes = z.union([route, z.array(route).min(1)]);
 const perTier = <T extends z.ZodType>(t: T) => z.object({ S: t, M: t, L: t });
 
 export const configSchema = z.object({
-  session_harness: z.enum(["claude", "codex"]),
+  session_harness: harness,
+  /** For a Pi session: the provider it runs on (decides the vendor for the cross-vendor rule). */
+  session_provider: z.string().optional(),
   commands: z.record(z.string(), z.string()),
   gate: z.array(z.string()),
-  docs: z.object({ paths: z.array(z.string()) }),
+  docs: z.object({
+    paths: z.array(z.string()),
+    /** Explicit code → docs links; always checked, on top of the mention scan. */
+    map: z.array(z.object({ code: z.string(), docs: z.array(z.string()) })).default([]),
+  }),
   risk_markers: z.array(z.object({ path: z.string(), tier, reason: z.string() })),
   routing: z.object({
     classifier: route,
+    researcher: perTier(route),
+    planner: perTier(route),
     reviewer: perTier(routes),
     fixer: perTier(route),
+    doc_gardener: route,
   }),
+  ci: z.object({ provider: z.enum(["github"]), node_version: z.string() }),
   review: z.object({
     max_rounds: z.number().int().min(1).max(10),
     block_on: z.array(z.enum(["blocker", "major", "minor"])).min(1),
@@ -38,10 +52,22 @@ export const DEFAULT_CONFIG: Config = {
   session_harness: "claude",
   commands: {},
   gate: [],
-  docs: { paths: ["docs/", "AGENTS.md", "README.md"] },
+  docs: { paths: ["docs/", "AGENTS.md", "README.md"], map: [] },
   risk_markers: [],
   routing: {
     classifier: { harness: "claude", model: "haiku" },
+    // Research needs web access: Claude has WebSearch/WebFetch; Codex gets --search.
+    researcher: {
+      S: { harness: "claude", model: "sonnet" },
+      M: { harness: "claude", model: "sonnet" },
+      L: { harness: "claude", model: "opus", effort: "high" },
+    },
+    planner: {
+      S: { harness: "claude", model: "sonnet" },
+      M: { harness: "claude", model: "sonnet" },
+      L: { harness: "claude", model: "opus", effort: "high" },
+    },
+    doc_gardener: { harness: "claude", model: "sonnet" },
     reviewer: {
       S: { harness: "codex", effort: "low" },
       M: { harness: "codex", effort: "medium" },
@@ -59,6 +85,7 @@ export const DEFAULT_CONFIG: Config = {
   review: { max_rounds: 3, block_on: ["blocker", "major"] },
   checkpoints: { S: { before_fix: false }, M: { before_fix: false }, L: { before_fix: true } },
   worktree: { dir: "../{repo}-worktrees/{slug}", branch: "work/{slug}" },
+  ci: { provider: "github", node_version: "22" },
 };
 
 export const CONFIG_PATH = ".rafoflow/config.yaml";

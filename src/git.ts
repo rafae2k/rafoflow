@@ -17,6 +17,7 @@ export function changedFiles(cwd: string): string[] {
 }
 
 export const diffStat = (cwd: string): string => git(cwd, ["diff", "--stat", "HEAD"]);
+export const diffText = (cwd: string): string => git(cwd, ["diff", "HEAD"]);
 
 export function addWorktree(cwd: string, dir: string, branch: string): void {
   git(cwd, ["worktree", "add", "-b", branch, dir]);
