@@ -12,7 +12,8 @@
     "prompts",
     "schemas",
     "skills",
-    "templates"
+    "templates",
+    "styles"
   ],
   "engines": {
     "node": ">=22.6"
@@ -23,7 +24,8 @@
     "test": "vitest run",
     "eval:classifier": "promptfoo eval -c evals/classifier/promptfooconfig.yaml --no-cache",
     "eval:reviewer": "promptfoo eval -c evals/reviewer/promptfooconfig.yaml --no-cache",
-    "eval:routing": "promptfoo eval -c evals/routing/promptfooconfig.yaml --no-cache"
+    "eval:routing": "promptfoo eval -c evals/routing/promptfooconfig.yaml --no-cache",
+    "eval:style": "promptfoo eval -c evals/style/promptfooconfig.yaml --no-cache"
   },
   "dependencies": {
     "yaml": "^2.8.0",

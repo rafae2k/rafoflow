@@ -1,0 +1,51 @@
+# All four variants. For shorter runs use claude.yaml / codex.yaml (same cases).
+description: rafoflow response style — router vs baseline
+prompts:
+  - "{{request}}"
+providers:
+  - id: file://../providers/rafoflow.mjs
+    label: claude-sonnet/router
+    config:
+      role: respond
+      variant: router
+      route:
+        harness: claude
+        model: sonnet
+  - id: file://../providers/rafoflow.mjs
+    label: claude-sonnet/baseline
+    config:
+      role: respond
+      variant: baseline
+      route:
+        harness: claude
+        model: sonnet
+  - id: file://../providers/rafoflow.mjs
+    label: codex-low/router
+    config:
+      role: respond
+      variant: router
+      route:
+        harness: codex
+        effort: low
+  - id: file://../providers/rafoflow.mjs
+    label: codex-low/baseline
+    config:
+      role: respond
+      variant: baseline
+      route:
+        harness: codex
+        effort: low
+defaultTest:
+  options:
+    provider:
+      id: file://../providers/rafoflow.mjs
+      config:
+        role: judge
+        route:
+          harness: claude
+          model: haiku
+  assert:
+    - type: javascript
+      metric: within_budget
+      value: file://../lib/assert-style.mjs:withinBudget
+tests: file://cases.yaml

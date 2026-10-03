@@ -14,6 +14,7 @@ v2 moves the guarantees into a small CLI and keeps the skills thin:
 - **Base agents** — roles (classifier, reviewer, fixer; more to come) defined as prompt + allowed tools + output schema, executed by the orchestrator in any harness.
 - **Model routing by complexity** — an LLM classifier assigns each piece of work a tier (`S`, `M`, `L`); risk markers declared by the repo are hard floors; a role × tier table picks harness, model and effort; reviewers come from a different vendor than the implementer.
 - **Process and verification loops** — phases in code with typed outcomes, a review loop that stops on convergence, gates from the repo's own commands, human checkpoints.
+- **Response style** — a router, installed as a managed block in `AGENTS.md`, picks the response type (incident, decision, status, investigation, procedure, explanation, delegation, casual) and applies a short template: answer first, detail after, and warnings, numbers, errors and next steps never cut. Built from ASD-STE100, BLUF, SBAR and SRE postmortems.
 - **Measured** — promptfoo eval suites run the real roles on the real harnesses.
 
 ## Quick start
@@ -70,6 +71,7 @@ First results, 2026-10-03:
 | classifier | 10 labeled requests × Claude Haiku and Codex (low effort) | 20/20 after one prompt revision (first run: 16/20 — Haiku under-rated a CSV export, Codex over-rated a payment-status banner and an internal API change, and Haiku once skipped the structured output) |
 | reviewer | Seeded-defect fixture (3 defects), 3 repeats × Codex (medium) and Claude Sonnet | 6/6: all 3 defects found in every run; Codex 0 noise, Sonnet 1 minor finding (missing tests) |
 | routing | 4 requests (task / feature / research, with near-misses), 2 repeats on Codex | 8/8 |
+| style | 10 cases with and without the response-style router, Claude Sonnet and Codex | Router cut prose 19% (Claude) and 16% (Codex); answer-first 8/9 vs 3/9 (Claude) and 7/9 vs 6/9 (Codex); no critical field lost — see [docs/response-style.md](docs/response-style.md) |
 
 An end-to-end run of `rafoflow review` on the fixture converged in 2 rounds (~80 s, US$ 0.34 of Claude): Codex found the 3 defects, Claude fixed them and added tests.
 

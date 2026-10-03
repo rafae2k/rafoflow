@@ -9,7 +9,7 @@ import { loadConfig } from "./config.js";
 import { run } from "./exec.js";
 import { runGate } from "./gate.js";
 import { addWorktree, changedFiles, currentBranch, repoRoot } from "./git.js";
-import { init, skillDrift } from "./init.js";
+import { init, responseStyleState, skillDrift } from "./init.js";
 import { reviewLoop } from "./review.js";
 import { reviewerRoutes } from "./routing.js";
 import { TIERS, type Finding, type Harness, type Tier } from "./types.js";
@@ -85,6 +85,9 @@ async function main(): Promise<void> {
       const r = init(root, harness);
       print(`config: .rafoflow/config.yaml (${r.config})`);
       r.skills.forEach((s) => print(`skill: ${s}`));
+      print(`AGENTS.md response style: ${r.agentsMd}`);
+      if (r.claudeMd === "created") print("CLAUDE.md: created as `@AGENTS.md` so Claude Code reads the same instructions");
+      if (r.claudeMd === "missing-import") print("warning: CLAUDE.md exists but does not import AGENTS.md — add `@AGENTS.md` so Claude Code gets the response style");
       print("next: declare your commands and gate in .rafoflow/config.yaml, then run `rafoflow doctor`");
       return;
     }
@@ -211,6 +214,8 @@ async function main(): Promise<void> {
       print(`claude auth: ${process.env.ANTHROPIC_API_KEY ? "API key" : "subscription login — automated loops on a consumer login are a gray area in Anthropic's terms"}`);
       const cs = run(binaries.codex, ["login", "status"]);
       print(`codex auth: ${(cs.out + cs.err).trim() || "unknown"}`);
+      const rs = responseStyleState(root);
+      print(`response style: AGENTS.md block ${rs.agentsMd}; CLAUDE.md ${rs.claudeMd}`);
       print("skills:");
       skillDrift(root).forEach((s) => print(`  ${s.state.padEnd(8)} ${s.path}${s.installed && s.installed !== s.expected ? ` (installed ${s.installed}, package ${s.expected})` : ""}`));
       return;

@@ -1,0 +1,35 @@
+# Generated split of promptfooconfig.yaml (one harness, router vs baseline) so each run fits in a shorter window.
+description: rafoflow response style — router vs baseline — claude
+prompts:
+  - "{{request}}"
+providers:
+  - id: file://../providers/rafoflow.mjs
+    label: claude-sonnet/router
+    config:
+      role: respond
+      variant: router
+      route:
+        harness: claude
+        model: sonnet
+  - id: file://../providers/rafoflow.mjs
+    label: claude-sonnet/baseline
+    config:
+      role: respond
+      variant: baseline
+      route:
+        harness: claude
+        model: sonnet
+defaultTest:
+  options:
+    provider:
+      id: file://../providers/rafoflow.mjs
+      config:
+        role: judge
+        route:
+          harness: claude
+          model: haiku
+  assert:
+    - type: javascript
+      metric: within_budget
+      value: file://../lib/assert-style.mjs:withinBudget
+tests: file://cases.yaml

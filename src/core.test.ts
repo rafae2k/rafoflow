@@ -6,7 +6,7 @@ import { claudeArgs, codexArgs, type AgentRequest, type AgentResult, type AgentR
 import { applyFloor, classify, riskFloor } from "./classify.js";
 import { DEFAULT_CONFIG, enforceGuardrails, loadConfig, type Config } from "./config.js";
 import type { GateResult } from "./gate.js";
-import { init, readStamp, skillDrift, stampSkill } from "./init.js";
+import { init, readBlockVersion, readStamp, responseStyleBlock, responseStyleState, skillDrift, stampSkill, upsertBlock } from "./init.js";
 import { decide, mergeFindings, reviewLoop } from "./review.js";
 import { reviewerRoutes } from "./routing.js";
 import type { Finding } from "./types.js";
@@ -230,6 +230,31 @@ describe("init and skill drift", () => {
     writeFileSync(path, readFileSync(path, "utf8") + "\nlocal edit\n");
     expect(skillDrift(root).find((s) => s.path === ".claude/skills/task/SKILL.md")?.state).toBe("modified");
     expect(init(root, "claude").config).toBe("kept");
+  });
+});
+
+describe("response style block", () => {
+  it("inserts the block once and replaces it in place on update, keeping the rest of AGENTS.md", () => {
+    const block = responseStyleBlock("1.0.0");
+    const first = upsertBlock("# Repo\n\nOwn rules.\n", block);
+    expect(first).toContain("Own rules.");
+    expect(first.match(/rafoflow:response-style:start/g)).toHaveLength(1);
+    const second = upsertBlock(first.replace("Own rules.", "Own rules, edited."), responseStyleBlock("2.0.0"));
+    expect(second).toContain("Own rules, edited.");
+    expect(readBlockVersion(second)).toBe("2.0.0");
+    expect(second.match(/rafoflow:response-style:start/g)).toHaveLength(1);
+  });
+
+  it("creates CLAUDE.md as an import only when it does not exist", () => {
+    const root = tmp();
+    expect(init(root, "claude").claudeMd).toBe("created");
+    expect(readFileSync(join(root, "CLAUDE.md"), "utf8")).toBe("@AGENTS.md\n");
+    expect(responseStyleState(root)).toEqual({ agentsMd: "ok", claudeMd: "imports-agents" });
+
+    const other = tmp();
+    writeFileSync(join(other, "CLAUDE.md"), "# my own instructions\n");
+    expect(init(other, "claude").claudeMd).toBe("missing-import");
+    expect(readFileSync(join(other, "CLAUDE.md"), "utf8")).toBe("# my own instructions\n");
   });
 });
 

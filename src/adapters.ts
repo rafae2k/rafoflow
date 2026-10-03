@@ -43,6 +43,8 @@ export const binaries = {
 /** Claude Code headless (`claude -p`). Prompt goes through stdin. */
 export function claudeArgs(req: AgentRequest): string[] {
   const args = ["-p", "--output-format", "json"];
+  // Evals set this to "project" so the user's personal output style and hooks do not leak into results.
+  if (process.env.RAFOFLOW_CLAUDE_SETTING_SOURCES) args.push("--setting-sources", process.env.RAFOFLOW_CLAUDE_SETTING_SOURCES);
   if (req.route.model) args.push("--model", req.route.model);
   if (req.route.effort) args.push("--effort", req.route.effort);
   if (req.schema) args.push("--json-schema", JSON.stringify(req.schema));

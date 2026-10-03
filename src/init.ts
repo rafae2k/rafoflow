@@ -25,6 +25,48 @@ export const packageSkills = (): string[] => readdirSync(join(PACKAGE_ROOT, "ski
 export interface InitResult {
   config: "created" | "kept";
   skills: string[];
+  agentsMd: "created" | "updated" | "unchanged";
+  claudeMd: "created" | "imports-agents" | "missing-import";
+}
+
+const BLOCK_START = "<!-- rafoflow:response-style:start -->";
+const BLOCK_END = "<!-- rafoflow:response-style:end -->";
+
+/** The always-on response style, wrapped in markers with the package version. */
+export function responseStyleBlock(version: string): string {
+  const body = readFileSync(join(PACKAGE_ROOT, "styles", "response-style.md"), "utf8").trim();
+  return `${BLOCK_START}\n<!-- managed by rafoflow ${version}: edit the package, or delete the markers to take ownership -->\n${body}\n${BLOCK_END}`;
+}
+
+/** Inserts the block, or replaces the existing one between the markers. Everything else is left untouched. */
+export function upsertBlock(content: string, block: string): string {
+  const start = content.indexOf(BLOCK_START);
+  const end = content.indexOf(BLOCK_END);
+  if (start !== -1 && end > start) return content.slice(0, start) + block + content.slice(end + BLOCK_END.length);
+  return `${content}${content && !content.endsWith("\n") ? "\n" : ""}${content ? "\n" : ""}${block}\n`;
+}
+
+export function readBlockVersion(content: string): string | undefined {
+  return content.match(/managed by rafoflow ([^:\s]+):/)?.[1];
+}
+
+/**
+ * AGENTS.md is read natively by Codex, Pi, OpenCode, Cursor and Copilot. Claude Code reads CLAUDE.md,
+ * so a missing CLAUDE.md is created as a one-line import; an existing one is never edited.
+ */
+function installResponseStyle(repoRoot: string): Pick<InitResult, "agentsMd" | "claudeMd"> {
+  const agentsPath = join(repoRoot, "AGENTS.md");
+  const before = existsSync(agentsPath) ? readFileSync(agentsPath, "utf8") : undefined;
+  const after = upsertBlock(before ?? "", responseStyleBlock(PACKAGE_VERSION));
+  if (after !== before) writeFileSync(agentsPath, after);
+  const agentsMd = before === undefined ? "created" : after === before ? "unchanged" : "updated";
+
+  const claudePath = join(repoRoot, "CLAUDE.md");
+  if (!existsSync(claudePath)) {
+    writeFileSync(claudePath, "@AGENTS.md\n");
+    return { agentsMd, claudeMd: "created" };
+  }
+  return { agentsMd, claudeMd: readFileSync(claudePath, "utf8").includes("@AGENTS.md") ? "imports-agents" : "missing-import" };
 }
 
 export function init(repoRoot: string, harness: Harness): InitResult {
@@ -52,7 +94,19 @@ export function init(repoRoot: string, harness: Harness): InitResult {
   const current = existsSync(gitignore) ? readFileSync(gitignore, "utf8") : "";
   if (!current.split("\n").includes(line)) appendFileSync(gitignore, `${current && !current.endsWith("\n") ? "\n" : ""}${line}\n`);
 
-  return { config, skills: installed };
+  return { config, skills: installed, ...installResponseStyle(repoRoot) };
+}
+
+/** State of the response-style block in AGENTS.md, and whether Claude Code will see it. */
+export function responseStyleState(repoRoot: string): { agentsMd: "ok" | "outdated" | "modified" | "missing"; claudeMd: "imports-agents" | "missing-import" | "missing" } {
+  const agentsPath = join(repoRoot, "AGENTS.md");
+  const claudePath = join(repoRoot, "CLAUDE.md");
+  const claudeMd = !existsSync(claudePath) ? "missing" : readFileSync(claudePath, "utf8").includes("@AGENTS.md") ? "imports-agents" : "missing-import";
+  if (!existsSync(agentsPath)) return { agentsMd: "missing", claudeMd };
+  const content = readFileSync(agentsPath, "utf8");
+  if (!content.includes(BLOCK_START)) return { agentsMd: "missing", claudeMd };
+  if (readBlockVersion(content) !== PACKAGE_VERSION) return { agentsMd: "outdated", claudeMd };
+  return { agentsMd: content.includes(responseStyleBlock(PACKAGE_VERSION)) ? "ok" : "modified", claudeMd };
 }
 
 export interface SkillDrift {
