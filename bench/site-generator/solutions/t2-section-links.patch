@@ -1,0 +1,49 @@
+diff --git a/src/links/resolve.ts b/src/links/resolve.ts
+index 703ced3..b154fe2 100644
+--- a/src/links/resolve.ts
++++ b/src/links/resolve.ts
+@@ -32,12 +32,21 @@ export function resolveLink(href: string, from: LinkSource, pages: PageIndex): L
+   if (SCHEME.test(href) || href.startsWith("//")) return { kind: "external" };
+   if (!MARKDOWN_LINK.test(href)) return { kind: "asset" };
+ 
+-  const target = resolveSourcePath(from.sourcePath, href);
++  // "install.md#requirements" -> path "install.md", suffix "#requirements".
++  // Only the path is resolved; the query/fragment is carried over unchanged.
++  const { path: linkPath, suffix } = splitSuffix(href);
++  const target = resolveSourcePath(from.sourcePath, linkPath);
+   if (target === undefined) return { kind: "broken", reason: "points outside the source directory" };
+ 
+   const route = pages.get(target);
+   if (route === undefined) return { kind: "broken", reason: `no page at ${target}` };
+-  return { kind: "page", href: relativeUrl(from.route, route), target };
++  return { kind: "page", href: relativeUrl(from.route, route) + suffix, target };
++}
++
++/** Splits an href into its path and its "?query#fragment" suffix (possibly empty). */
++export function splitSuffix(href: string): { path: string; suffix: string } {
++  const index = href.search(/[?#]/);
++  return index === -1 ? { path: href, suffix: "" } : { path: href.slice(0, index), suffix: href.slice(index) };
+ }
+ 
+ /** Resolves a link path against the linking page; undefined if it leaves the source dir. */
+diff --git a/test/links.test.ts b/test/links.test.ts
+index c8d6e9c..d41199c 100644
+--- a/test/links.test.ts
++++ b/test/links.test.ts
+@@ -30,6 +30,16 @@ describe("resolveLink", () => {
+     assert.deepEqual(resolveLink("/index.md", from, pages), { kind: "page", href: "../index.html", target: "index.md" });
+   });
+ 
++  it("keeps the section of a link to another page", () => {
++    assert.deepEqual(resolveLink("../index.md#top", from, pages), { kind: "page", href: "../index.html#top", target: "index.md" });
++    assert.deepEqual(resolveLink("advanced/tuning.md?v=2#cache", from, pages), {
++      kind: "page",
++      href: "advanced/tuning.html?v=2#cache",
++      target: "guide/advanced/tuning.md",
++    });
++    assert.deepEqual(resolveLink("nope.md#x", from, pages), { kind: "broken", reason: "no page at guide/nope.md" });
++  });
++
+   it("reports missing pages and links outside the source dir", () => {
+     assert.deepEqual(resolveLink("nope.md", from, pages), { kind: "broken", reason: "no page at guide/nope.md" });
+     assert.equal(resolveLink("../../secret.md", from, pages).kind, "broken");

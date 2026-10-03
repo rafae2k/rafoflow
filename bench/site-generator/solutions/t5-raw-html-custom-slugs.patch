@@ -1,0 +1,196 @@
+diff --git a/docs/authoring.md b/docs/authoring.md
+index eb7b249..f8d93c3 100644
+--- a/docs/authoring.md
++++ b/docs/authoring.md
+@@ -1,6 +1,6 @@
+ # Authoring pages
+ 
+-Every `.md` file under the source dir (default `content/`) becomes one HTML page at the same relative path: `content/guide/install.md` → `dist/guide/install.html`. Files and folders whose names start with `_` or `.` are ignored (`_layout.html` lives there). Pages are discovered by `loadPages` in `src/content/load.ts` and turned into `Page` objects by `createPage` in `src/content/page.ts`.
++Every `.md` file under the source dir (default `content/`) becomes one HTML page at the same relative path: `content/guide/install.md` → `dist/guide/install.html`, unless the page sets a `slug`. Files and folders whose names start with `_` or `.` are ignored (`_layout.html` lives there). Pages are discovered by `loadPages` in `src/content/load.ts` and turned into `Page` objects by `createPage` in `src/content/page.ts`.
+ 
+ ## Front matter
+ 
+@@ -20,9 +20,16 @@ description: How to install the tool
+ | `order` | number | Position among siblings in the navigation. Pages without it come after ordered ones. |
+ | `description` | string | Goes into `<meta name="description">`. |
+ | `draft` | boolean | `true` leaves the page out of the build. Links to a draft are broken links. |
++| `slug` | string | Custom output path without extension: `slug: product/landing` → `dist/product/landing.html`. |
+ 
+ Any other key is kept in `page.data` for plugins. All values are escaped when they reach HTML.
+ 
++## Custom slugs
++
++`slug` moves a page's output away from its file location. It must be a relative path of segments made of letters, digits, `-` and `_`, separated by `/` — no `..`, no leading `/`, no extension (`isValidSlug`, `src/paths.ts`). Anything else fails the build with a `FrontMatterError`, so a slug can never write outside the output dir. Two pages that end up at the same output path fail the build with a `DuplicateRouteError` instead of overwriting each other.
++
++Links keep using the source file: `[Promo](marketing/promo.md)` points at the page's slug automatically, and so does the navigation (which still follows the source folders).
++
+ ## Markdown subset
+ 
+ `renderMarkdown` (`src/markdown/render.ts`) supports:
+@@ -33,7 +40,7 @@ Any other key is kept in `page.data` for plugins. All values are escaped when th
+ - Flat bullet (`-`, `*`, `+`) and numbered (`1.`) lists; indented lines continue the previous item.
+ - Inline: `` `code` ``, `**strong**`, `*emphasis*` / `_emphasis_`, `[links](target)`, backslash escapes. Rendered by `renderInline` (`src/markdown/inline.ts`).
+ 
+-Raw HTML is **not** passed through: `<div>` in a page shows up as text. Links with schemes other than `http:`, `https:` and `mailto:` are replaced by `#`.
++Raw HTML is **not** passed through: `<div>` in a page shows up as text. This is deliberate (AGENTS.md invariant 1): page content and front matter are always escaped, so a page cannot inject scripts, iframes or tracking snippets. Site-wide embeds belong in the trusted `_layout.html`. Links with schemes other than `http:`, `https:` and `mailto:` are replaced by `#`.
+ 
+ ## Links between pages
+ 
+diff --git a/src/build.ts b/src/build.ts
+index 8601beb..47b4b28 100644
+--- a/src/build.ts
++++ b/src/build.ts
+@@ -1,7 +1,7 @@
+ import path from "node:path";
+ import { loadPages } from "./content/load.ts";
+ import { type Page, type PageSummary, toSummary } from "./content/page.ts";
+-import { BrokenLinkError, type BrokenLink } from "./errors.ts";
++import { BrokenLinkError, type BrokenLink, DuplicateRouteError } from "./errors.ts";
+ import type { FileSystem } from "./fs/types.ts";
+ import { rewriteLinks } from "./links/rewrite.ts";
+ import { type Heading, renderMarkdown } from "./markdown/render.ts";
+@@ -58,6 +58,7 @@ export async function build(options: BuildOptions): Promise<BuildResult> {
+   const layout = options.layout ?? (await loadLayout(fs, srcDir));
+ 
+   const pages = (await loadPages(fs, srcDir)).filter((p) => !p.draft);
++  assertUniqueRoutes(pages);
+   const index = new Map(pages.map((p) => [p.sourcePath, p.route]));
+ 
+   const rendered: RenderedPage[] = [];
+@@ -113,6 +114,17 @@ export async function build(options: BuildOptions): Promise<BuildResult> {
+   return { pages: summaries, written };
+ }
+ 
++/** Two pages (e.g. one with a custom slug) must never overwrite each other's output. */
++function assertUniqueRoutes(pages: readonly Page[]): void {
++  const seen = new Map<string, string>();
++  for (const page of pages) {
++    const key = page.route.toLowerCase(); // case-insensitive file systems would collide too
++    const other = seen.get(key);
++    if (other !== undefined) throw new DuplicateRouteError(page.route, [other, page.sourcePath]);
++    seen.set(key, page.sourcePath);
++  }
++}
++
+ async function loadLayout(fs: FileSystem, srcDir: string): Promise<string> {
+   const file = posix.join(srcDir, LAYOUT_FILE);
+   return (await fs.exists(file)) ? fs.readFile(file) : DEFAULT_LAYOUT;
+diff --git a/src/content/page.ts b/src/content/page.ts
+index e6b2466..59a79df 100644
+--- a/src/content/page.ts
++++ b/src/content/page.ts
+@@ -1,6 +1,6 @@
+ import path from "node:path";
+ import { FrontMatterError } from "../errors.ts";
+-import { routeForSource } from "../paths.ts";
++import { isValidSlug, routeForSlug, routeForSource } from "../paths.ts";
+ import { type FrontMatter, parseFrontMatter } from "./frontmatter.ts";
+ 
+ export interface Page {
+@@ -35,6 +35,12 @@ export function createPage(sourcePath: string, raw: string): Page {
+   if (data.draft !== undefined && typeof data.draft !== "boolean") {
+     throw new FrontMatterError(sourcePath, `"draft" must be true or false`);
+   }
++  if (data.slug !== undefined && (typeof data.slug !== "string" || !isValidSlug(data.slug))) {
++    throw new FrontMatterError(
++      sourcePath,
++      `"slug" must be a relative path of letters, digits, "-" and "_" segments separated by "/" (got ${JSON.stringify(data.slug)})`,
++    );
++  }
+   if (data.title !== undefined && typeof data.title !== "string") {
+     throw new FrontMatterError(sourcePath, `"title" must be a string`);
+   }
+@@ -43,7 +49,7 @@ export function createPage(sourcePath: string, raw: string): Page {
+ 
+   return {
+     sourcePath,
+-    route: routeForSource(sourcePath),
++    route: typeof data.slug === "string" ? routeForSlug(data.slug) : routeForSource(sourcePath),
+     title,
+     order: typeof data.order === "number" ? data.order : undefined,
+     draft: data.draft === true,
+diff --git a/src/errors.ts b/src/errors.ts
+index ab36ef8..5377629 100644
+--- a/src/errors.ts
++++ b/src/errors.ts
+@@ -54,6 +54,17 @@ export class PluginError extends SiteError {
+   }
+ }
+ 
++export class DuplicateRouteError extends SiteError {
++  readonly route: string;
++  readonly sources: readonly string[];
++
++  constructor(route: string, sources: readonly string[]) {
++    super("DUPLICATE_ROUTE", `${sources.join(" and ")} would both be written to ${route}`);
++    this.route = route;
++    this.sources = sources;
++  }
++}
++
+ export interface BrokenLink {
+   /** Source path of the page containing the link, relative to the source dir. */
+   from: string;
+diff --git a/src/paths.ts b/src/paths.ts
+index 2a45043..009ff3c 100644
+--- a/src/paths.ts
++++ b/src/paths.ts
+@@ -19,6 +19,24 @@ export function routeForSource(sourcePath: string): string {
+   return `${sourcePath.slice(0, -".md".length)}.html`;
+ }
+ 
++/**
++ * A custom slug from front matter: one or more path segments made of letters,
++ * digits, "-" and "_", separated by "/". No "." or ".." segments, no leading
++ * or trailing "/", no extension. This keeps slugs from escaping the output dir
++ * (invariant 5) and from carrying markup into URLs.
++ */
++const SLUG = /^[A-Za-z0-9_-]+(\/[A-Za-z0-9_-]+)*$/;
++
++export function isValidSlug(slug: string): boolean {
++  return SLUG.test(slug);
++}
++
++/** Route for a validated slug: "product/landing" -> "product/landing.html". */
++export function routeForSlug(slug: string): string {
++  if (!isValidSlug(slug)) throw new PathError(slug, `invalid slug: ${JSON.stringify(slug)}`);
++  return `${slug}.html`;
++}
++
+ /**
+  * Joins a route onto the output directory and guarantees the result stays
+  * inside it (invariant 5). Throws PathError otherwise.
+diff --git a/test/slug.test.ts b/test/slug.test.ts
+new file mode 100644
+index 0000000..25dd948
+--- /dev/null
++++ b/test/slug.test.ts
+@@ -0,0 +1,28 @@
++import assert from "node:assert/strict";
++import { describe, it } from "node:test";
++import { DuplicateRouteError, FrontMatterError } from "../src/errors.ts";
++import { isValidSlug } from "../src/paths.ts";
++import { buildSite } from "./helpers.ts";
++
++describe("custom slugs", () => {
++  it("validates slugs", () => {
++    for (const ok of ["a", "product/landing", "v2_docs/x-y"]) assert.equal(isValidSlug(ok), true, ok);
++    for (const bad of ["", "/a", "a/", "../a", "a/../b", "a/./b", "a.html", "a b", "a//b", '"><x']) {
++      assert.equal(isValidSlug(bad), false, bad);
++    }
++  });
++
++  it("writes the page at its slug and rewrites links to it", async () => {
++    const { out, result } = await buildSite({ "index.md": "[p](deep/promo.md)", "deep/promo.md": "---\nslug: landing\n---\nP" });
++    assert.deepEqual(result.written, ["index.html", "landing.html"]);
++    assert.match(await out("index.html"), /<a href="landing\.html">p<\/a>/);
++  });
++
++  it("rejects unsafe slugs with a front matter error", async () => {
++    await assert.rejects(buildSite({ "a.md": "---\nslug: ../../etc/x\n---\n" }), FrontMatterError);
++  });
++
++  it("rejects two pages with the same output path", async () => {
++    await assert.rejects(buildSite({ "a.md": "---\nslug: b\n---\n", "b.md": "B" }), DuplicateRouteError);
++  });
++});

@@ -1,0 +1,428 @@
+diff --git a/docs/architecture.md b/docs/architecture.md
+index 7603085..fb8d82b 100644
+--- a/docs/architecture.md
++++ b/docs/architecture.md
+@@ -1,6 +1,6 @@
+ # Architecture
+ 
+-The generator is a single pipeline in `build()` (`src/build.ts`). Every build is a **full build**: all pages are loaded, rendered and written, and the output dir is wiped first so files from earlier builds never survive.
++The generator is a single pipeline in `build()` (`src/build.ts`). By default every build is a **full build**: all pages are loaded, rendered and written, and the output dir is wiped first so files from earlier builds never survive. With `incremental: true` only the pages affected by a change are re-rendered (see [Incremental builds](#incremental-builds)); the output is byte-identical to a full build either way.
+ 
+ ## Pipeline
+ 
+@@ -14,6 +14,19 @@ The generator is a single pipeline in `build()` (`src/build.ts`). Every build is
+ 
+ With `dryRun: true` the build stops before step 7; the CLI's `check` command uses this.
+ 
++## Incremental builds
++
++`build({ incremental: true })` (CLI: `build --incremental`) keeps a cache manifest, `.site-manifest.json` in the output dir (`src/incremental/manifest.ts`). It records:
++
++- `buildKey` — a hash of what every page depends on: the layout, `site` options, the plugins (`name` + `cacheKey`) and the injected `now` date;
++- `navKey` — a hash of every page's source path, route, title and order, i.e. the site structure that each page's navigation and link rewriting depend on;
++- per page, a hash of its source (front matter + body) and its route;
++- every output file with a hash of its contents.
++
++On the next incremental build all pages are still loaded (cheap). If there is no valid manifest, or `buildKey` or `navKey` changed (a page was added, removed, renamed, re-titled, re-ordered or turned into a draft; the layout or options changed), it does a full build. Otherwise only pages whose source hash changed — or whose output file is missing — are rendered, link-checked and written; unchanged pages are left on disk, since everything their output depends on is unchanged. Files emitted by `onBuildEnd` are rewritten only when their contents change, and files from the previous build that are no longer produced are removed.
++
++The manifest is written last and only after a successful build, so a failed build (e.g. a broken link) leaves the previous output and manifest intact. A plain (non-incremental) build wipes the output dir, manifest included. Do not edit files in the output dir by hand when using incremental builds: an existing output file for an unchanged page is trusted.
++
+ ## File system
+ 
+ All I/O goes through the `FileSystem` interface (`src/fs/types.ts`). `createNodeFs()` (`src/fs/node-fs.ts`) wraps `node:fs/promises`; `MemoryFs` (`src/fs/memory-fs.ts`) keeps files in a map and is what the tests use.
+diff --git a/docs/cli.md b/docs/cli.md
+index 9b5d631..7bbf944 100644
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -3,11 +3,12 @@
+ The CLI lives in `src/cli.ts`; `runCli(argv, io)` does the work and returns the exit code, so it can be tested with `MemoryFs`.
+ 
+ ```sh
+-node src/cli.ts build [--root <dir>] [--src <dir>] [--out <dir>] [--no-reading-time]
++node src/cli.ts build [--root <dir>] [--src <dir>] [--out <dir>] [--no-reading-time] [--incremental]
+ node src/cli.ts check [same options]
+ ```
+ 
+ - `build` — full build of the source dir into the output dir (see `docs/architecture.md`). The output dir is replaced on every build.
++- `build --incremental` — rebuilds only the pages affected by changes since the last incremental build, using `.site-manifest.json` in the output dir. Output is identical to a full build.
+ - `check` — runs the whole pipeline with `dryRun: true`: front matter, links and templates are validated, nothing is written.
+ 
+ Exit codes: `0` success, `1` build error (broken links, bad front matter, ...), `2` usage error.
+diff --git a/docs/plugins.md b/docs/plugins.md
+index c42e67c..9cbbc9f 100644
+--- a/docs/plugins.md
++++ b/docs/plugins.md
+@@ -1,6 +1,6 @@
+ # Plugins
+ 
+-A plugin is an object with a `name` and optional hooks (`Plugin` in `src/plugins/types.ts`). Pass plugins to `build({ plugins: [...] })`; they run in the order given.
++A plugin is an object with a `name`, an optional `cacheKey` and optional hooks (`Plugin` in `src/plugins/types.ts`). `cacheKey` must change whenever the plugin's options change, so incremental builds re-render every page; `onPage` must depend only on its context (page, site summaries), never on outside state. Pass plugins to `build({ plugins: [...] })`; they run in the order given.
+ 
+ ```ts
+ import type { Plugin } from "./src/index.ts";
+diff --git a/src/build.ts b/src/build.ts
+index 8601beb..664685e 100644
+--- a/src/build.ts
++++ b/src/build.ts
+@@ -3,6 +3,7 @@ import { loadPages } from "./content/load.ts";
+ import { type Page, type PageSummary, toSummary } from "./content/page.ts";
+ import { BrokenLinkError, type BrokenLink } from "./errors.ts";
+ import type { FileSystem } from "./fs/types.ts";
++import { hashOf, type Manifest, MANIFEST_FILE, MANIFEST_VERSION, readManifest, serializeManifest } from "./incremental/manifest.ts";
+ import { rewriteLinks } from "./links/rewrite.ts";
+ import { type Heading, renderMarkdown } from "./markdown/render.ts";
+ import { buildNavTree, renderNav } from "./nav/tree.ts";
+@@ -31,6 +32,12 @@ export interface BuildOptions {
+   now?: Date;
+   /** Validate everything (front matter, links, templates) but write nothing. */
+   dryRun?: boolean;
++  /**
++   * Reuse the previous build's output: only re-render pages that changed (or
++   * every page when something they all depend on changed). The output is
++   * byte-identical to a full build. Keeps a manifest in the output dir.
++   */
++  incremental?: boolean;
+ }
+ 
+ export interface BuildResult {
+@@ -46,23 +53,48 @@ interface RenderedPage {
+ }
+ 
+ /**
+- * Full build: load pages, render Markdown, rewrite and check links, then
+- * apply plugins and the layout and write every page. Nothing is written if
+- * any link is broken. The output dir is wiped first so stale files never
+- * survive (output = f(input)).
++ * Builds the site: load pages, render Markdown, rewrite and check links, then
++ * apply plugins and the layout and write the pages. Nothing is written if any
++ * link is broken.
++ *
++ * A full build wipes the output dir first so stale files never survive
++ * (output = f(input)). An incremental build compares the input with the
++ * manifest of the previous build and re-renders only what changed; when the
++ * layout, site options, plugins or the site structure (any page's path,
++ * title or order — i.e. the navigation every page embeds) changed, it falls
++ * back to a full build.
+  */
+ export async function build(options: BuildOptions): Promise<BuildResult> {
+   const { fs, srcDir, outDir } = options;
+   const site: SiteInfo = { title: "Documentation", lang: "en", ...options.site };
+   const plugins = options.plugins ?? [];
+   const layout = options.layout ?? (await loadLayout(fs, srcDir));
++  const buildDate = options.now ? options.now.toISOString().slice(0, 10) : undefined;
++  const incremental = options.incremental === true && options.dryRun !== true;
+ 
+   const pages = (await loadPages(fs, srcDir)).filter((p) => !p.draft);
+   const index = new Map(pages.map((p) => [p.sourcePath, p.route]));
++  const summaries = deepFreeze(pages.map(toSummary));
++
++  const buildKey = hashOf({ version: MANIFEST_VERSION, layout, site, plugins: plugins.map((p) => [p.name, p.cacheKey ?? ""]), buildDate });
++  const navKey = hashOf(summaries);
++  const pageHashes = new Map(pages.map((p) => [p.sourcePath, hashOf({ sourcePath: p.sourcePath, data: p.data, body: p.body })]));
++
++  // Decide which pages to render. With an unchanged build key and nav key the
++  // set of pages, their routes and titles are identical to the previous build,
++  // so an unchanged page's output (layout + nav + its own links) is unchanged too.
++  const previous = incremental ? await readManifest(fs, outDir) : undefined;
++  const reuse = previous !== undefined && previous.buildKey === buildKey && previous.navKey === navKey;
++  const toRender: Page[] = [];
++  for (const page of pages) {
++    if (!reuse || (await needsRender(fs, outDir, page, pageHashes.get(page.sourcePath) as string, previous))) {
++      toRender.push(page);
++    }
++  }
+ 
+   const rendered: RenderedPage[] = [];
+   const broken: BrokenLink[] = [];
+-  for (const page of pages) {
++  for (const page of toRender) {
+     const md = renderMarkdown(page.body);
+     const linked = rewriteLinks(md.html, page, index);
+     broken.push(...linked.broken);
+@@ -70,9 +102,7 @@ export async function build(options: BuildOptions): Promise<BuildResult> {
+   }
+   if (broken.length > 0) throw new BrokenLinkError(broken);
+ 
+-  const summaries = deepFreeze(pages.map(toSummary));
+   const nav = buildNavTree(summaries);
+-
+   const outputs = new Map<string, string>();
+   for (const { page, html, headings } of rendered) {
+     const hooked = await runPageHooks(plugins, page, headings, html, summaries);
+@@ -83,36 +113,75 @@ export async function build(options: BuildOptions): Promise<BuildResult> {
+       rootUrl: rootPrefix(page.route),
+       nav: renderNav(nav, page.route),
+       content: hooked.html,
+-      buildDate: options.now ? options.now.toISOString().slice(0, 10) : undefined,
++      buildDate,
+     };
+     outputs.set(page.route, renderTemplate(layout, vars));
+   }
+ 
++  const emitted = new Map<string, string>();
+   for (const plugin of plugins) {
+     if (!plugin.onBuildEnd) continue;
+     await plugin.onBuildEnd({
+       site: summaries,
+       emit(relativePath, contents) {
+         resolveOutputPath(outDir, relativePath); // validate early, throws PathError
+-        outputs.set(posix.normalize(relativePath), contents);
++        emitted.set(posix.normalize(relativePath), contents);
+       },
+     });
+   }
+ 
+   if (options.dryRun) return { pages: summaries, written: [] };
+ 
+-  await fs.rm(outDir);
++  // Hashes of every file this build owns, unchanged pages included.
++  const outputHashes: Record<string, string> = {};
++  for (const page of pages) {
++    const fresh = outputs.get(page.route);
++    outputHashes[page.route] = fresh !== undefined ? hashOf(fresh) : (previous?.outputs[page.route] as string);
++  }
++  for (const [route, contents] of emitted) outputHashes[route] = hashOf(contents);
++
++  const toWrite = new Map(outputs);
++  for (const [route, contents] of emitted) {
++    if (!reuse || previous.outputs[route] !== outputHashes[route]) toWrite.set(route, contents);
++  }
++
++  if (reuse) {
++    for (const route of Object.keys(previous.outputs).sort()) {
++      if (!(route in outputHashes)) await fs.rm(resolveOutputPath(outDir, route));
++    }
++  } else {
++    await fs.rm(outDir);
++  }
+   await fs.mkdir(outDir);
++
+   const written: string[] = [];
+-  for (const [route, contents] of [...outputs].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {
++  for (const [route, contents] of [...toWrite].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {
+     const target = resolveOutputPath(outDir, route);
+     await fs.mkdir(posix.dirname(target));
+     await fs.writeFile(target, contents);
+     written.push(route);
+   }
++
++  if (incremental) {
++    const manifest: Manifest = {
++      version: MANIFEST_VERSION,
++      buildKey,
++      navKey,
++      pages: Object.fromEntries(pages.map((p) => [p.sourcePath, { hash: pageHashes.get(p.sourcePath) as string, route: p.route }])),
++      outputs: outputHashes,
++    };
++    // Written last: if anything above fails, the previous manifest still describes the output dir.
++    await fs.writeFile(posix.join(outDir, MANIFEST_FILE), serializeManifest(manifest));
++  }
+   return { pages: summaries, written };
+ }
+ 
++async function needsRender(fs: FileSystem, outDir: string, page: Page, hash: string, previous: Manifest): Promise<boolean> {
++  const entry = previous.pages[page.sourcePath];
++  if (entry === undefined || entry.hash !== hash || entry.route !== page.route) return true;
++  return !(await fs.exists(resolveOutputPath(outDir, page.route)));
++}
++
+ async function loadLayout(fs: FileSystem, srcDir: string): Promise<string> {
+   const file = posix.join(srcDir, LAYOUT_FILE);
+   return (await fs.exists(file)) ? fs.readFile(file) : DEFAULT_LAYOUT;
+diff --git a/src/cli.ts b/src/cli.ts
+index d19b717..2fdd76f 100644
+--- a/src/cli.ts
++++ b/src/cli.ts
+@@ -30,10 +30,11 @@ Options:
+   --src <dir>         Override the source dir
+   --out <dir>         Override the output dir
+   --no-reading-time   Disable the reading-time plugin
++  --incremental       Only rebuild pages affected by changes since the last incremental build
+ `;
+ 
+ const VALUE_FLAGS = ["root", "src", "out"];
+-const BOOLEAN_FLAGS = ["no-reading-time"];
++const BOOLEAN_FLAGS = ["no-reading-time", "incremental"];
+ 
+ export function parseArgs(argv: readonly string[]): CliArgs {
+   const [command = "help", ...rest] = argv;
+@@ -86,9 +87,11 @@ export async function runCli(argv: readonly string[], io: CliIo): Promise<number
+       site: { title: config.title, lang: config.lang },
+       plugins: pluginsFor(config, args),
+       dryRun: args.command === "check",
++      incremental: args.flags.has("incremental"),
+     });
+ 
+     if (args.command === "check") io.stdout(`ok: ${result.pages.length} pages, no broken links`);
++    else if (args.flags.has("incremental")) io.stdout(`built ${result.pages.length} pages into ${outDir} (${result.written.length} files written)`);
+     else io.stdout(`built ${result.pages.length} pages into ${outDir}`);
+     return 0;
+   } catch (err) {
+diff --git a/src/incremental/manifest.ts b/src/incremental/manifest.ts
+new file mode 100644
+index 0000000..3897e78
+--- /dev/null
++++ b/src/incremental/manifest.ts
+@@ -0,0 +1,69 @@
++import { createHash } from "node:crypto";
++import path from "node:path";
++import type { FileSystem } from "../fs/types.ts";
++
++/** Cache manifest written into the output dir by incremental builds. */
++export const MANIFEST_FILE = ".site-manifest.json";
++export const MANIFEST_VERSION = 1;
++
++export interface ManifestPage {
++  /** Hash of the page's source (front matter + body). */
++  hash: string;
++  route: string;
++}
++
++export interface Manifest {
++  version: number;
++  /** Hash of everything that affects every page: layout, site info, plugins, injected date. */
++  buildKey: string;
++  /** Hash of the site structure: every page's source path, route, title and order. */
++  navKey: string;
++  pages: Record<string, ManifestPage>;
++  /** Every file the build produced (route -> content hash), so stale ones can be removed. */
++  outputs: Record<string, string>;
++}
++
++/** JSON with object keys sorted at every level, so equal values hash equally. */
++export function stableStringify(value: unknown): string {
++  if (value === undefined || value === null) return "null";
++  if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
++  if (typeof value === "object") {
++    const entries = Object.keys(value)
++      .sort()
++      .map((key) => `${JSON.stringify(key)}:${stableStringify((value as Record<string, unknown>)[key])}`);
++    return `{${entries.join(",")}}`;
++  }
++  return JSON.stringify(value);
++}
++
++export function hashOf(value: unknown): string {
++  return createHash("sha256").update(typeof value === "string" ? value : stableStringify(value)).digest("hex");
++}
++
++/** Reads the manifest; undefined if missing, unreadable or from another version (forces a full build). */
++export async function readManifest(fs: FileSystem, outDir: string): Promise<Manifest | undefined> {
++  const file = path.posix.join(outDir, MANIFEST_FILE);
++  if (!(await fs.exists(file))) return undefined;
++  try {
++    const parsed = JSON.parse(await fs.readFile(file)) as Partial<Manifest>;
++    if (
++      parsed.version !== MANIFEST_VERSION ||
++      typeof parsed.buildKey !== "string" ||
++      typeof parsed.navKey !== "string" ||
++      typeof parsed.pages !== "object" ||
++      parsed.pages === null ||
++      typeof parsed.outputs !== "object" ||
++      parsed.outputs === null
++    ) {
++      return undefined;
++    }
++    return parsed as Manifest;
++  } catch {
++    return undefined;
++  }
++}
++
++/** Deterministic serialization: same manifest, same bytes. */
++export function serializeManifest(manifest: Manifest): string {
++  return `${JSON.stringify(JSON.parse(stableStringify(manifest)), null, 2)}\n`;
++}
+diff --git a/src/plugins/reading-time.ts b/src/plugins/reading-time.ts
+index 1b069ec..0e5f561 100644
+--- a/src/plugins/reading-time.ts
++++ b/src/plugins/reading-time.ts
+@@ -16,6 +16,7 @@ export function readingTime(options: ReadingTimeOptions = {}): Plugin {
+ 
+   return {
+     name: "reading-time",
++    cacheKey: `wpm=${wpm}`,
+     onPage(ctx) {
+       const minutes = Math.max(1, Math.ceil(countWords(ctx.page.body) / wpm));
+       ctx.vars.readingTime = `${minutes} min read`;
+diff --git a/src/plugins/types.ts b/src/plugins/types.ts
+index 57bcf12..1b53aa0 100644
+--- a/src/plugins/types.ts
++++ b/src/plugins/types.ts
+@@ -29,6 +29,11 @@ export interface BuildEndContext {
+ 
+ export interface Plugin {
+   name: string;
++  /**
++   * Changes whenever the plugin's options change, so incremental builds know
++   * to re-render every page (e.g. reading-time's words per minute).
++   */
++  cacheKey?: string;
+   onPage?(ctx: PageHookContext): void | Promise<void>;
+   onBuildEnd?(ctx: BuildEndContext): void | Promise<void>;
+ }
+diff --git a/test/incremental.test.ts b/test/incremental.test.ts
+new file mode 100644
+index 0000000..5762249
+--- /dev/null
++++ b/test/incremental.test.ts
+@@ -0,0 +1,59 @@
++import assert from "node:assert/strict";
++import { describe, it } from "node:test";
++import { build } from "../src/build.ts";
++import { hashOf, MANIFEST_FILE, stableStringify } from "../src/incremental/manifest.ts";
++import { readingTime } from "../src/plugins/reading-time.ts";
++import { OUT, siteFs, SRC } from "./helpers.ts";
++
++describe("incremental builds", () => {
++  it("stableStringify sorts keys at every level", () => {
++    assert.equal(stableStringify({ b: 1, a: { d: [2, { y: 1, x: 2 }], c: undefined } }), '{"a":{"c":null,"d":[2,{"x":2,"y":1}]},"b":1}');
++    assert.equal(hashOf({ a: 1, b: 2 }), hashOf({ b: 2, a: 1 }));
++  });
++
++  it("writes a deterministic manifest only in incremental mode", async () => {
++    const a = siteFs({ "a.md": "A", "b.md": "B" });
++    const b = siteFs({ "b.md": "B", "a.md": "A" });
++    await build({ fs: a, srcDir: SRC, outDir: OUT, incremental: true });
++    await build({ fs: b, srcDir: SRC, outDir: OUT, incremental: true });
++    assert.deepEqual(a.snapshot(OUT), b.snapshot(OUT));
++    assert.ok(await a.exists(`${OUT}/${MANIFEST_FILE}`));
++
++    await build({ fs: a, srcDir: SRC, outDir: OUT });
++    assert.equal(await a.exists(`${OUT}/${MANIFEST_FILE}`), false);
++  });
++
++  it("reports only the files it rewrote", async () => {
++    const fs = siteFs({ "a.md": "A", "b.md": "B" });
++    await build({ fs, srcDir: SRC, outDir: OUT, incremental: true });
++    await fs.writeFile(`${SRC}/b.md`, "B changed");
++    const result = await build({ fs, srcDir: SRC, outDir: OUT, incremental: true });
++    assert.deepEqual(result.written, ["b.html"]);
++  });
++
++  it("rebuilds everything when a plugin option changes", async () => {
++    const fs = siteFs({ "a.md": "word ".repeat(300), "b.md": "B" });
++    await build({ fs, srcDir: SRC, outDir: OUT, incremental: true, plugins: [readingTime()] });
++    const result = await build({ fs, srcDir: SRC, outDir: OUT, incremental: true, plugins: [readingTime({ wordsPerMinute: 100 })] });
++    assert.deepEqual(result.written, ["a.html", "b.html"]);
++    assert.match(await fs.readFile(`${OUT}/a.html`), /3 min read/);
++  });
++
++  it("re-renders a page whose output file went missing", async () => {
++    const fs = siteFs({ "a.md": "A", "b.md": "B" });
++    await build({ fs, srcDir: SRC, outDir: OUT, incremental: true });
++    await fs.rm(`${OUT}/a.html`);
++    const result = await build({ fs, srcDir: SRC, outDir: OUT, incremental: true });
++    assert.deepEqual(result.written, ["a.html"]);
++  });
++
++  it("falls back to a full build when the manifest is corrupt", async () => {
++    const fs = siteFs({ "a.md": "A" });
++    await build({ fs, srcDir: SRC, outDir: OUT, incremental: true });
++    await fs.writeFile(`${OUT}/${MANIFEST_FILE}`, "{not json");
++    await fs.writeFile(`${OUT}/stale.html`, "old");
++    const result = await build({ fs, srcDir: SRC, outDir: OUT, incremental: true });
++    assert.deepEqual(result.written, ["a.html"]);
++    assert.equal(await fs.exists(`${OUT}/stale.html`), false);
++  });
++});

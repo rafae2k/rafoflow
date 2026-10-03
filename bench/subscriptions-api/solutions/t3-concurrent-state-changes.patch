@@ -1,0 +1,476 @@
+diff --git a/docs/api.md b/docs/api.md
+index 8188b5a..ad8a359 100644
+--- a/docs/api.md
++++ b/docs/api.md
+@@ -29,9 +29,9 @@ All routes are registered in `createApp` (`src/http/app.ts`); the handlers live
+ | --- | --- | --- | --- |
+ | POST | `/subscriptions` `{ customer_id, plan_id }` | `201` subscription | `402` first charge failed, `404` |
+ | GET | `/subscriptions/:id` | `200` subscription | `404` |
+-| POST | `/subscriptions/:id/pause` | `200` subscription | `409 invalid_transition` |
+-| POST | `/subscriptions/:id/resume` | `200` subscription + `catch_up_charge` | `402`, `409 not_paused` |
+-| POST | `/subscriptions/:id/cancel` | `200` subscription | `409 invalid_transition` |
++| POST | `/subscriptions/:id/pause` | `200` subscription | `409 invalid_transition`, `409 operation_in_progress` |
++| POST | `/subscriptions/:id/resume` | `200` subscription + `catch_up_charge` | `402`, `409 not_paused`, `409 operation_in_progress` |
++| POST | `/subscriptions/:id/cancel` | `200` subscription | `409 invalid_transition`, `409 operation_in_progress` |
+ | GET | `/subscriptions/:id/charges` | `200 { data: Charge[] }` | `404` |
+ | GET | `/subscriptions/:id/events` | `200 { data: DomainEvent[] }` | `404` |
+ 
+diff --git a/docs/billing.md b/docs/billing.md
+index d395b59..1678106 100644
+--- a/docs/billing.md
++++ b/docs/billing.md
+@@ -35,6 +35,17 @@ Paused, canceled and past_due subscriptions are not renewed. Retrying past_due s
+   - If `next_charge_at` passed while paused, the plan price is charged immediately (the "catch-up charge"), and `next_charge_at` moves past now with `advancePast`. If the catch-up charge fails, the subscription stays paused and the API answers `402`.
+ - Every resume writes exactly one `subscription.resumed` event.
+ 
++## Concurrent requests
++
++Status changes are compare-and-set writes (`updateSubscriptionIf` in `src/repositories/subscriptions.ts`): the update only applies if the row still has the status the request read. A request that loses a race gets `409` and writes no event.
++
++Operations that await the gateway (the resume catch-up charge and each renewal) first take an operation lock on the row (`acquireLock`, columns `lock_token` / `locked_at`, migration `004_subscription_locks`). While it is held:
++
++- a second resume, a pause or a cancel answers `409 operation_in_progress` (the client retries);
++- the renewal job skips that subscription until its next run.
++
++So two overlapping resumes charge once and write one `subscription.resumed` event, and a cancel can never be overwritten by an in-flight resume or renewal. The lock expires after `LOCK_TTL_MS` (5 minutes) so a crashed process cannot block a subscription forever; if a gateway call outlives the lock and the subscription changed meanwhile, the charge is still recorded and the request answers `409 concurrent_change` for manual review.
++
+ ## Cancel
+ 
+ Cancel is immediate and terminal: `status = canceled`, `canceled_at` is now and `next_charge_at` becomes `null`. There are no refunds on cancel.
+diff --git a/src/billing/billing-service.ts b/src/billing/billing-service.ts
+index 43007a8..0a62ba2 100644
+--- a/src/billing/billing-service.ts
++++ b/src/billing/billing-service.ts
+@@ -7,7 +7,13 @@ import type { IdGenerator } from "../lib/ids.ts";
+ import { findCustomer } from "../repositories/customers.ts";
+ import { appendEvent } from "../repositories/events.ts";
+ import { findPlan } from "../repositories/plans.ts";
+-import { insertSubscription, listDueSubscriptions, updateSubscription } from "../repositories/subscriptions.ts";
++import {
++  acquireLock,
++  insertSubscription,
++  listDueSubscriptions,
++  releaseLock,
++  updateSubscriptionIf,
++} from "../repositories/subscriptions.ts";
+ import { computeNextChargeAt } from "./next-charge.ts";
+ import type { PaymentGateway } from "./payment-gateway.ts";
+ import { recordCharge } from "./record-charge.ts";
+@@ -22,6 +28,8 @@ export interface BillingDeps {
+ export interface RenewalSummary {
+   charged: number;
+   failed: number;
++  /** Subscriptions skipped because another request was changing them; retried next run. */
++  skipped?: number;
+ }
+ 
+ export interface BillingService {
+@@ -82,6 +90,10 @@ export function createBillingService(deps: BillingDeps): BillingService {
+      * Charges every active subscription that is due. A successful charge
+      * moves `next_charge_at` forward one interval; a failed one moves the
+      * subscription to past_due.
++     *
++     * Each subscription is locked while its charge is in flight, so a pause or
++     * cancel that arrives meanwhile is answered 409 instead of being
++     * overwritten. Subscriptions already locked are skipped until the next run.
+      */
+     async runDueRenewals() {
+       const summary: RenewalSummary = { charged: 0, failed: 0 };
+@@ -89,24 +101,35 @@ export function createBillingService(deps: BillingDeps): BillingService {
+       for (const sub of due) {
+         const plan = findPlan(db, sub.plan_id);
+         if (!plan) throw new NotFoundError("plan", sub.plan_id);
+-        const result = await gateway.charge({
+-          customerId: sub.customer_id,
+-          subscriptionId: sub.id,
+-          amountCents: plan.price_cents,
+-        });
++        const token = ids("lock");
++        if (!acquireLock(db, sub.id, "active", token, clock().toISOString())) {
++          summary.skipped = (summary.skipped ?? 0) + 1;
++          continue;
++        }
++        let result: Awaited<ReturnType<PaymentGateway["charge"]>>;
++        try {
++          result = await gateway.charge({
++            customerId: sub.customer_id,
++            subscriptionId: sub.id,
++            amountCents: plan.price_cents,
++          });
++        } catch (err) {
++          releaseLock(db, sub.id, token);
++          throw err;
++        }
+         const now = clock().toISOString();
+         withTransaction(db, () => {
+           recordCharge(db, ids, sub, plan.price_cents, result, now);
++          const expected = { status: sub.status, lockToken: token, nowIso: now };
+           if (result.ok) {
+             // sub.next_charge_at is non-null: listDueSubscriptions filters on it.
+-            updateSubscription(db, {
+-              ...sub,
+-              next_charge_at: computeNextChargeAt(sub.next_charge_at as string, plan.interval),
+-              updated_at: now,
+-            });
++            updateSubscriptionIf(
++              db,
++              { ...sub, next_charge_at: computeNextChargeAt(sub.next_charge_at as string, plan.interval), updated_at: now },
++              expected,
++            );
+             summary.charged++;
+-          } else {
+-            updateSubscription(db, { ...sub, status: "past_due", updated_at: now });
++          } else if (updateSubscriptionIf(db, { ...sub, status: "past_due", updated_at: now }, expected)) {
+             appendEvent(db, ids, {
+               type: eventTypeForTransition("past_due"),
+               subscription_id: sub.id,
+@@ -114,6 +137,8 @@ export function createBillingService(deps: BillingDeps): BillingService {
+               occurred_at: now,
+             });
+             summary.failed++;
++          } else {
++            summary.failed++;
+           }
+         });
+       }
+diff --git a/src/db/migrations.ts b/src/db/migrations.ts
+index 2161538..94d7adb 100644
+--- a/src/db/migrations.ts
++++ b/src/db/migrations.ts
+@@ -102,6 +102,15 @@ export const MIGRATIONS: readonly Migration[] = [
+       CREATE INDEX webhook_deliveries_pending ON webhook_deliveries (status, created_at);
+     `,
+   },
++  {
++    // Lease held while an operation awaits the payment gateway (resume
++    // catch-up charge, renewal). Existing rows start unlocked (NULL).
++    id: "004_subscription_locks",
++    sql: `
++      ALTER TABLE subscriptions ADD COLUMN lock_token TEXT;
++      ALTER TABLE subscriptions ADD COLUMN locked_at TEXT;
++    `,
++  },
+ ];
+ 
+ export function applyMigrations(db: DatabaseSync, migrations: readonly Migration[] = MIGRATIONS): string[] {
+diff --git a/src/repositories/subscriptions.ts b/src/repositories/subscriptions.ts
+index 0a795ad..a92509e 100644
+--- a/src/repositories/subscriptions.ts
++++ b/src/repositories/subscriptions.ts
+@@ -1,8 +1,17 @@
+ import type { Database } from "../db/database.ts";
+-import type { Subscription } from "../domain/types.ts";
++import type { Subscription, SubscriptionStatus } from "../domain/types.ts";
++
++/** How long an operation lock is honored before another request may take it over. */
++export const LOCK_TTL_MS = 5 * 60_000;
+ 
+ function toSubscription(row: Record<string, unknown>): Subscription {
+-  return { ...row } as unknown as Subscription;
++  // The lock columns are internal bookkeeping, not part of the subscription.
++  const { lock_token: _token, locked_at: _lockedAt, ...rest } = row;
++  return rest as unknown as Subscription;
++}
++
++export function lockExpiry(nowIso: string): string {
++  return new Date(new Date(nowIso).getTime() - LOCK_TTL_MS).toISOString();
+ }
+ 
+ export function insertSubscription(db: Database, sub: Subscription): Subscription {
+@@ -29,7 +38,71 @@ export function findSubscription(db: Database, id: string): Subscription | undef
+   return row ? toSubscription(row) : undefined;
+ }
+ 
+-/** Writes the mutable columns of a subscription. Callers own the transaction. */
++/**
++ * Takes the operation lock if the subscription is still in `status` and is
++ * not locked by a live operation. Returns false when someone else got there
++ * first (or the status changed).
++ */
++export function acquireLock(db: Database, id: string, status: SubscriptionStatus, token: string, nowIso: string): boolean {
++  const result = db
++    .prepare(
++      `UPDATE subscriptions SET lock_token = ?, locked_at = ?
++        WHERE id = ? AND status = ? AND (lock_token IS NULL OR locked_at < ?)`,
++    )
++    .run(token, nowIso, id, status, lockExpiry(nowIso));
++  return Number(result.changes) === 1;
++}
++
++export function releaseLock(db: Database, id: string, token: string): void {
++  db.prepare("UPDATE subscriptions SET lock_token = NULL, locked_at = NULL WHERE id = ? AND lock_token = ?").run(
++    id,
++    token,
++  );
++}
++
++export function isLocked(db: Database, id: string, nowIso: string): boolean {
++  const row = db
++    .prepare("SELECT 1 AS locked FROM subscriptions WHERE id = ? AND lock_token IS NOT NULL AND locked_at >= ?")
++    .get(id, lockExpiry(nowIso));
++  return row !== undefined;
++}
++
++/**
++ * Compare-and-set write: stores `next` only if the row is still in
++ * `expected.status` and the lock matches (`lockToken: null` means "not
++ * locked by a live operation"). Releases the lock on success.
++ */
++export function updateSubscriptionIf(
++  db: Database,
++  next: Subscription,
++  expected: { status: SubscriptionStatus; lockToken: string | null; nowIso: string },
++): boolean {
++  const lockCondition =
++    expected.lockToken === null ? "(lock_token IS NULL OR locked_at < ?)" : "lock_token = ?";
++  const result = db
++    .prepare(
++      `UPDATE subscriptions
++          SET status = ?, next_charge_at = ?, paused_at = ?, canceled_at = ?, updated_at = ?,
++              lock_token = NULL, locked_at = NULL
++        WHERE id = ? AND status = ? AND ${lockCondition}`,
++    )
++    .run(
++      next.status,
++      next.next_charge_at,
++      next.paused_at,
++      next.canceled_at,
++      next.updated_at,
++      next.id,
++      expected.status,
++      expected.lockToken ?? lockExpiry(expected.nowIso),
++    );
++  return Number(result.changes) === 1;
++}
++
++/**
++ * Unconditional write of the mutable columns. Prefer `updateSubscriptionIf`:
++ * anything that read the row before an `await` must compare-and-set.
++ */
+ export function updateSubscription(db: Database, sub: Subscription): void {
+   db.prepare(
+     `UPDATE subscriptions
+diff --git a/src/subscriptions/subscription-service.ts b/src/subscriptions/subscription-service.ts
+index 513c39d..88f221e 100644
+--- a/src/subscriptions/subscription-service.ts
++++ b/src/subscriptions/subscription-service.ts
+@@ -9,7 +9,13 @@ import { ConflictError, NotFoundError, PaymentFailedError } from "../lib/errors.
+ import type { IdGenerator } from "../lib/ids.ts";
+ import { appendEvent } from "../repositories/events.ts";
+ import { findPlan } from "../repositories/plans.ts";
+-import { findSubscription, updateSubscription } from "../repositories/subscriptions.ts";
++import {
++  acquireLock,
++  findSubscription,
++  isLocked,
++  releaseLock,
++  updateSubscriptionIf,
++} from "../repositories/subscriptions.ts";
+ 
+ export interface SubscriptionDeps {
+   db: Database;
+@@ -40,7 +46,21 @@ export function createSubscriptionService(deps: SubscriptionDeps): SubscriptionS
+     return sub;
+   }
+ 
+-  /** Writes the new state and its single domain event in one transaction. */
++  /** Explains why a compare-and-set lost: an operation in flight, or a status change. */
++  function conflictFor(id: string): ConflictError {
++    const now = clock().toISOString();
++    if (isLocked(db, id, now)) {
++      return new ConflictError("operation_in_progress", `subscription ${id} is being changed by another request; retry`);
++    }
++    const current = get(id);
++    return new ConflictError("concurrent_change", `subscription ${id} changed concurrently and is now ${current.status}`);
++  }
++
++  /**
++   * Writes the new state and its single domain event in one transaction.
++   * The write is a compare-and-set on the status read in `sub`, so a request
++   * that lost a race gets a 409 instead of overwriting the winner.
++   */
+   function transition(
+     sub: Subscription,
+     to: SubscriptionStatus,
+@@ -50,15 +70,17 @@ export function createSubscriptionService(deps: SubscriptionDeps): SubscriptionS
+     assertTransition(sub.status, to);
+     const now = clock().toISOString();
+     const next: Subscription = { ...sub, ...changes, status: to, updated_at: now };
+-    withTransaction(db, () => {
+-      updateSubscription(db, next);
++    const written = withTransaction(db, () => {
++      if (!updateSubscriptionIf(db, next, { status: sub.status, lockToken: null, nowIso: now })) return false;
+       appendEvent(db, ids, {
+         type: eventTypeForTransition(to),
+         subscription_id: sub.id,
+         payload: { from: sub.status, to, ...payload },
+         occurred_at: now,
+       });
++      return true;
+     });
++    if (!written) throw conflictFor(sub.id);
+     return next;
+   }
+ 
+@@ -74,6 +96,11 @@ export function createSubscriptionService(deps: SubscriptionDeps): SubscriptionS
+      * Resumes a paused subscription. If its charge date passed while it was
+      * paused, the current period is charged immediately and the next charge
+      * date moves past "now".
++     *
++     * The catch-up charge awaits the gateway, so the subscription is locked
++     * first (a lease in the row): a second resume, a pause or a cancel that
++     * arrives meanwhile gets 409 operation_in_progress instead of charging
++     * twice or being overwritten.
+      */
+     async resume(id) {
+       const sub = get(id);
+@@ -89,15 +116,27 @@ export function createSubscriptionService(deps: SubscriptionDeps): SubscriptionS
+         return { subscription: transition(sub, "active", { paused_at: null }), charge: null };
+       }
+ 
+-      const result = await gateway.charge({
+-        customerId: sub.customer_id,
+-        subscriptionId: sub.id,
+-        amountCents: plan.price_cents,
+-      });
++      const token = ids("lock");
++      if (!acquireLock(db, sub.id, "paused", token, nowBefore)) throw conflictFor(sub.id);
++
++      let result: Awaited<ReturnType<PaymentGateway["charge"]>>;
++      try {
++        result = await gateway.charge({
++          customerId: sub.customer_id,
++          subscriptionId: sub.id,
++          amountCents: plan.price_cents,
++        });
++      } catch (err) {
++        releaseLock(db, sub.id, token);
++        throw err;
++      }
+       const now = clock().toISOString();
+ 
+       if (!result.ok) {
+-        withTransaction(db, () => recordCharge(db, ids, sub, plan.price_cents, result, now));
++        withTransaction(db, () => {
++          recordCharge(db, ids, sub, plan.price_cents, result, now);
++          releaseLock(db, sub.id, token);
++        });
+         throw new PaymentFailedError(`catch-up charge failed: ${result.reason}`);
+       }
+ 
+@@ -108,18 +147,28 @@ export function createSubscriptionService(deps: SubscriptionDeps): SubscriptionS
+         next_charge_at: advancePast(sub.next_charge_at as string, plan.interval, now),
+         updated_at: now,
+       };
+-      const charge = withTransaction(db, () => {
++      const outcome = withTransaction(db, () => {
++        // The money was taken: the charge is recorded even if we lost the lease.
+         const charge = recordCharge(db, ids, sub, plan.price_cents, result, now);
+-        updateSubscription(db, resumed);
++        const written = updateSubscriptionIf(db, resumed, { status: "paused", lockToken: token, nowIso: now });
++        if (!written) return { charge, written };
+         appendEvent(db, ids, {
+           type: eventTypeForTransition("active"),
+           subscription_id: sub.id,
+           payload: { from: sub.status, to: "active", charge_id: charge.id },
+           occurred_at: now,
+         });
+-        return charge;
++        return { charge, written };
+       });
+-      return { subscription: resumed, charge };
++      if (!outcome.written) {
++        // Only possible if the gateway took longer than LOCK_TTL_MS and another
++        // request changed the subscription. The charge stays on record for a refund.
++        throw new ConflictError(
++          "concurrent_change",
++          `subscription ${sub.id} changed while charging; charge ${outcome.charge.id} needs review`,
++        );
++      }
++      return { subscription: resumed, charge: outcome.charge };
+     },
+ 
+     cancel(id) {
+diff --git a/test/concurrency.test.ts b/test/concurrency.test.ts
+new file mode 100644
+index 0000000..99c818a
+--- /dev/null
++++ b/test/concurrency.test.ts
+@@ -0,0 +1,77 @@
++import assert from "node:assert/strict";
++import { describe, it } from "node:test";
++import { LOCK_TTL_MS } from "../src/repositories/subscriptions.ts";
++import { createTestContext, seedSubscription } from "./helpers.ts";
++
++/** Gateway whose charges stay pending until `release()` is called. */
++function holdGateway(t: ReturnType<typeof createTestContext>) {
++  const pending: Array<() => void> = [];
++  const original = t.gateway.charge.bind(t.gateway);
++  t.gateway.charge = async (req) => {
++    await new Promise<void>((resolve) => pending.push(resolve));
++    return original(req);
++  };
++  return {
++    release() {
++      for (const resolve of pending.splice(0)) resolve();
++    },
++  };
++}
++
++describe("concurrent state changes", () => {
++  it("answers 409 operation_in_progress while a catch-up charge is in flight", async () => {
++    const t = createTestContext({ now: "2026-01-10T12:00:00.000Z" });
++    const { subscriptionId } = await seedSubscription(t);
++    await t.call("POST", `/subscriptions/${subscriptionId}/pause`);
++    t.setNow("2026-02-15T00:00:00.000Z");
++    const hold = holdGateway(t);
++
++    const resume = t.call("POST", `/subscriptions/${subscriptionId}/resume`);
++    await Promise.resolve();
++    for (const action of ["resume", "cancel"]) {
++      const res = await t.call("POST", `/subscriptions/${subscriptionId}/${action}`);
++      assert.equal(res.status, 409, action);
++      assert.equal(res.body.error.code, "operation_in_progress", action);
++    }
++    // Pausing a paused subscription is invalid regardless of the lock.
++    assert.equal((await t.call("POST", `/subscriptions/${subscriptionId}/pause`)).status, 409);
++    hold.release();
++    assert.equal((await resume).status, 200);
++
++    const sub = await t.call("GET", `/subscriptions/${subscriptionId}`);
++    assert.equal(sub.body.status, "active");
++    assert.equal("lock_token" in sub.body, false);
++    const events = await t.call("GET", `/subscriptions/${subscriptionId}/events`);
++    assert.equal(events.body.data.filter((e: { type: string }) => e.type === "subscription.resumed").length, 1);
++  });
++
++  it("renewals skip a locked subscription and cancel waits for the renewal", async () => {
++    const t = createTestContext({ now: "2026-01-10T12:00:00.000Z" });
++    const { subscriptionId } = await seedSubscription(t);
++    t.setNow("2026-02-10T12:00:00.000Z");
++    const hold = holdGateway(t);
++
++    const run = t.app.billing.runDueRenewals();
++    await Promise.resolve();
++    const cancel = await t.call("POST", `/subscriptions/${subscriptionId}/cancel`);
++    assert.equal(cancel.status, 409);
++    assert.deepEqual(await t.app.billing.runDueRenewals(), { charged: 0, failed: 0, skipped: 1 });
++    hold.release();
++    assert.deepEqual(await run, { charged: 1, failed: 0 });
++
++    const after = await t.call("POST", `/subscriptions/${subscriptionId}/cancel`);
++    assert.equal(after.status, 200);
++    assert.equal(after.body.next_charge_at, null);
++  });
++
++  it("a lock older than LOCK_TTL_MS no longer blocks other requests", async () => {
++    const t = createTestContext({ now: "2026-01-10T12:00:00.000Z" });
++    const { subscriptionId } = await seedSubscription(t);
++    t.db
++      .prepare("UPDATE subscriptions SET lock_token = 'lock_dead', locked_at = ? WHERE id = ?")
++      .run("2026-01-10T12:00:00.000Z", subscriptionId);
++    assert.equal((await t.call("POST", `/subscriptions/${subscriptionId}/pause`)).status, 409);
++    t.setNow(new Date(Date.parse("2026-01-10T12:00:00.000Z") + LOCK_TTL_MS + 1000).toISOString());
++    assert.equal((await t.call("POST", `/subscriptions/${subscriptionId}/pause`)).status, 200);
++  });
++});

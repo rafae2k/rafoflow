@@ -1,0 +1,62 @@
+diff --git a/docs/event-flow.md b/docs/event-flow.md
+index 3e0f97e..d2d1176 100644
+--- a/docs/event-flow.md
++++ b/docs/event-flow.md
+@@ -45,7 +45,7 @@ Rules shared by all handlers:
+ 
+ - **Stub orders.** Any event can arrive before `order.created`. `ensureOrder` (`src/db/orders-repo.ts`) creates a stub row that `order.created` fills in later.
+ - **Status is derived.** Handlers record facts (`paid_at`, `canceled_at`, shipments) and call `refreshOrderStatus`, which uses `deriveStatus` (`src/domain/status.ts`). No handler sets `status` by hand.
+-- **Items are snapshots.** `order.created` and `order.items_updated` carry the full list of items. `applyItemsSnapshot` (`src/handlers/items.ts`) replaces the stored items with `replaceOrderItems`, last-writer-wins by `occurred_at` (`orders.items_as_of`): an older snapshot arriving late is ignored. When the event has no `items` field, the list is unknown and stored items are left untouched (`items_snapshot_missing` metric).
++- **Items are snapshots.** `order.created` and `order.items_updated` carry the full list of items. `applyItemsSnapshot` (`src/handlers/items.ts`) replaces the stored items with `replaceOrderItems`, last-writer-wins by `occurred_at` (`orders.items_as_of`): an older snapshot arriving late is ignored. When the event has no `items` field, the list is unknown and stored items are left untouched (`items_snapshot_missing` metric). An empty `items: []` is treated the same way (`items_snapshot_empty_ignored` metric): the vendor sends it on partial edits, and an order never has zero items (removing everything is `order.canceled`).
+ - **Domain events.** Business facts derived from vendor events are written once with `recordDomainEvent` into `domain_events`, keyed by a natural id (`dispatched:<order>`, `shipped:<shipment>`, `delivered:<shipment>`, `canceled:<order>`). Downstream consumers (CRM, notifications) read this table; read it with `listDomainEvents`.
+ 
+ ## Adding an event type
+diff --git a/src/handlers/items.ts b/src/handlers/items.ts
+index c982781..837d2e8 100644
+--- a/src/handlers/items.ts
++++ b/src/handlers/items.ts
+@@ -32,7 +32,10 @@ export function validateItems(items: unknown): LineItemInput[] {
+  * `order.created` arriving late does not roll items back.
+  *
+  * `items === undefined` means the event did not carry the list (partial
+- * event): the stored items are left untouched.
++ * event): the stored items are left untouched. An empty list is treated the
++ * same way: the vendor sends `items: []` on partial updates (address or note
++ * edits), and an order can never legitimately have zero items. Removing every
++ * item is a cancellation, which has its own event.
+  */
+ export function applyItemsSnapshot(
+   ctx: HandlerContext,
+@@ -46,6 +49,11 @@ export function applyItemsSnapshot(
+     return "noop";
+   }
+   const validated = validateItems(items);
++  if (validated.length === 0) {
++    ctx.log.warn({ event: "items.snapshot_empty_ignored", order_id: orderId, as_of: asOf });
++    ctx.metrics.increment("items_snapshot_empty_ignored");
++    return "noop";
++  }
+   const order = getOrder(ctx.db, orderId);
+   if (order?.items_as_of && order.items_as_of > asOf) {
+     ctx.log.info({ event: "items.snapshot_stale", order_id: orderId, stored_as_of: order.items_as_of, as_of: asOf });
+diff --git a/test/handlers.test.ts b/test/handlers.test.ts
+index f80ff58..1cc27ae 100644
+--- a/test/handlers.test.ts
++++ b/test/handlers.test.ts
+@@ -91,6 +91,16 @@ describe("items handler", () => {
+     assert.equal(metrics.total("items_snapshot_missing"), 1);
+   });
+ 
++  it("leaves items alone when the event carries an empty items list", async () => {
++    const { pipeline, db, metrics } = setup();
++    pipeline.publish(created("o1", { at: minutes(1) }));
++    await pipeline.drain();
++    pipeline.publish(ev("order.items_updated", { order_id: "o1", items: [] }, { at: minutes(5) }));
++    await pipeline.drain();
++    assert.equal(listOrderItems(db, "o1").length, ITEMS.length);
++    assert.equal(metrics.total("items_snapshot_empty_ignored"), 1);
++  });
++
+   it("ignores a snapshot older than the stored one", async () => {
+     const { pipeline, db } = setup();
+     pipeline.publish(

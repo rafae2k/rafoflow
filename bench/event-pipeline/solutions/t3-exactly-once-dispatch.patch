@@ -1,0 +1,371 @@
+diff --git a/docs/fulfillment.md b/docs/fulfillment.md
+index 613d29e..7ba5044 100644
+--- a/docs/fulfillment.md
++++ b/docs/fulfillment.md
+@@ -18,14 +18,22 @@ Tests use `FakeWarehouse` (`src/adapters/fake-warehouse.ts`), which records ever
+ - `applyOrderPaid` — the usual trigger
+ - `applyItemsUpdated` — items may be the last piece
+ 
+-It dispatches when the order is paid, not canceled, and not yet dispatched (`orders.dispatched_at` is null). It then:
++It dispatches when the order is paid, not canceled, not yet dispatched (`orders.dispatched_at` is null) **and has items**. A paid order without items is not sent: `maybeDispatch` returns `waiting_for_items` (log `fulfillment.waiting_for_items`, metric `fulfillment_waiting_for_items`) and the later `order.items_updated` or `order.created` dispatches it.
++
++## Exactly once
++
++Several workers drain the queue against the same database, and each drain processes messages in parallel, so `order.paid`, `order.items_updated` and redeliveries of either can reach `maybeDispatch` for the same order at the same time. Checking `dispatched_at` alone is not enough: both callers would see it null while the first warehouse call is still in flight.
++
++Before calling the warehouse, `maybeDispatch` takes a claim with `claimDispatch` (`src/db/orders-repo.ts`): one conditional `UPDATE orders SET dispatch_claim_token = ... WHERE dispatched_at IS NULL AND (no claim OR own claim OR claim older than DISPATCH_CLAIM_TTL_MS)`. SQLite applies it atomically, so exactly one caller gets `changes = 1` and calls the warehouse; the others return `in_progress` (log `fulfillment.claim_contended`, metric `fulfillment_claim_contended`). The claim token is the triggering event id.
++
++Then the claim holder:
+ 
+ 1. calls `createFulfillment` with the order's current items (`listOrderItems`),
+ 2. stores `dispatched_at` and `fulfillment_id` with `markDispatched`,
+ 3. records the `order.dispatched` domain event (`dispatched:<order>`),
+ 4. refreshes the status to `fulfilling` and increments `fulfillment_dispatched{trigger}`.
+ 
+-Because the check is on `dispatched_at`, a redelivered `order.paid` does not dispatch again.
++If the warehouse call fails, `releaseDispatchClaim` drops the claim and the error propagates, so the triggering event is retried with backoff and claims again. If a worker dies mid-call, its event is redelivered and resumes its own claim (same token); a claim older than `DISPATCH_CLAIM_TTL_MS` can be taken by anyone.
+ 
+ ## Cancellation
+ 
+@@ -33,4 +41,5 @@ Because the check is on `dispatched_at`, a redelivered `order.paid` does not dis
+ 
+ ## Known gaps
+ 
+-- The warehouse team reports parcels sent with no items and fixes them by hand (see the TODO in `maybeDispatch`).
++- A worker that dies **after** the warehouse accepted the request but **before** `markDispatched` leaves a claim; the redelivered event will call the warehouse again. Closing this needs an idempotency key on the warehouse side (requested from the logistics team).
++- An `order.items_updated` that arrives after dispatch changes our items but not the parcel; ops handles amendments by hand.
+diff --git a/src/db/migrations.ts b/src/db/migrations.ts
+index ece6c22..e932b52 100644
+--- a/src/db/migrations.ts
++++ b/src/db/migrations.ts
+@@ -87,6 +87,16 @@ export const MIGRATIONS: readonly Migration[] = [
+       CREATE INDEX domain_events_order_idx ON domain_events (order_id, occurred_at);
+     `,
+   },
++  {
++    version: 4,
++    name: "dispatch_claim",
++    // Existing rows start unclaimed; dispatched orders keep dispatched_at, which
++    // claimDispatch checks first, so no backfill is needed.
++    sql: `
++      ALTER TABLE orders ADD COLUMN dispatch_claim_token TEXT;
++      ALTER TABLE orders ADD COLUMN dispatch_claimed_at TEXT;
++    `,
++  },
+ ];
+ 
+ export function migrate(db: DatabaseSync, migrations: readonly Migration[] = MIGRATIONS): number[] {
+diff --git a/src/db/orders-repo.ts b/src/db/orders-repo.ts
+index 5d8f17b..088f246 100644
+--- a/src/db/orders-repo.ts
++++ b/src/db/orders-repo.ts
+@@ -14,13 +14,18 @@ export interface Order {
+   canceled_at: string | null;
+   dispatched_at: string | null;
+   fulfillment_id: string | null;
++  /** Event id of the worker currently calling the warehouse for this order. */
++  dispatch_claim_token: string | null;
++  dispatch_claimed_at: string | null;
+   /** occurred_at of the items snapshot currently stored. */
+   items_as_of: string | null;
+   first_seen_at: string;
+   updated_at: string;
+ }
+ 
+-export type OrderPatch = Partial<Omit<Order, "id" | "first_seen_at" | "updated_at">>;
++export type OrderPatch = Partial<
++  Omit<Order, "id" | "first_seen_at" | "updated_at" | "dispatch_claim_token" | "dispatch_claimed_at">
++>;
+ 
+ const PATCHABLE_COLUMNS: ReadonlySet<string> = new Set([
+   "customer_email",
+@@ -47,6 +52,8 @@ function toOrder(row: Row): Order {
+     canceled_at: optStr(row.canceled_at),
+     dispatched_at: optStr(row.dispatched_at),
+     fulfillment_id: optStr(row.fulfillment_id),
++    dispatch_claim_token: optStr(row.dispatch_claim_token),
++    dispatch_claimed_at: optStr(row.dispatch_claimed_at),
+     items_as_of: optStr(row.items_as_of),
+     first_seen_at: str(row.first_seen_at),
+     updated_at: str(row.updated_at),
+@@ -92,6 +99,32 @@ export function updateOrder(db: Db, orderId: string, patch: OrderPatch, at: stri
+   db.prepare(`UPDATE orders SET ${assignments}, updated_at = ? WHERE id = ?`).run(...values, at, orderId);
+ }
+ 
++/**
++ * Atomically claims the right to call the warehouse for an order. A single
++ * conditional UPDATE, so of N concurrent callers exactly one gets
++ * `changes = 1`. A claim can be taken when none exists, when it is older than
++ * `staleBefore` (abandoned), or when `token` already owns it (redelivery).
++ * @returns true when the caller now holds the claim.
++ */
++export function claimDispatch(db: Db, orderId: string, token: string, at: string, staleBefore: string): boolean {
++  const result = db
++    .prepare(
++      `UPDATE orders SET dispatch_claim_token = ?, dispatch_claimed_at = ?, updated_at = ?
++       WHERE id = ? AND dispatched_at IS NULL AND canceled_at IS NULL AND paid_at IS NOT NULL
++         AND (dispatch_claim_token IS NULL OR dispatch_claim_token = ? OR dispatch_claimed_at < ?)`,
++    )
++    .run(token, at, at, orderId, token, staleBefore);
++  return Number(result.changes) === 1;
++}
++
++/** Drops a claim after a failed warehouse call so the retry (or anyone) can claim again. */
++export function releaseDispatchClaim(db: Db, orderId: string, token: string): void {
++  db.prepare(
++    `UPDATE orders SET dispatch_claim_token = NULL, dispatch_claimed_at = NULL
++     WHERE id = ? AND dispatch_claim_token = ? AND dispatched_at IS NULL`,
++  ).run(orderId, token);
++}
++
+ export function markDispatched(db: Db, orderId: string, fulfillmentId: string, at: string): void {
+   db.prepare("UPDATE orders SET dispatched_at = ?, fulfillment_id = ?, updated_at = ? WHERE id = ?").run(
+     at,
+diff --git a/src/fulfillment/dispatch.ts b/src/fulfillment/dispatch.ts
+index faea511..8662f93 100644
+--- a/src/fulfillment/dispatch.ts
++++ b/src/fulfillment/dispatch.ts
+@@ -1,17 +1,43 @@
+ import { recordDomainEvent } from "../db/bookkeeping-repo.ts";
+ import { listOrderItems } from "../db/items-repo.ts";
+-import { getOrder, markDispatched } from "../db/orders-repo.ts";
++import { claimDispatch, getOrder, markDispatched, releaseDispatchClaim } from "../db/orders-repo.ts";
++import type { EventEnvelope } from "../events/envelope.ts";
++import { toIso } from "../lib/clock.ts";
+ import { PermanentError } from "../lib/errors.ts";
+ import { now, refreshOrderStatus, type HandlerContext } from "../handlers/context.ts";
+ 
+-export type DispatchResult = "dispatched" | "not_paid" | "canceled" | "already_dispatched";
++/**
++ * How long a dispatch claim protects an in-flight warehouse call. A claim
++ * older than this is considered abandoned (worker died mid-call) and can be
++ * taken over. Must be well above the warehouse client timeout (30s).
++ */
++export const DISPATCH_CLAIM_TTL_MS = 10 * 60_000;
++
++export type DispatchResult =
++  | "dispatched"
++  | "not_paid"
++  | "canceled"
++  | "already_dispatched"
++  | "waiting_for_items"
++  | "in_progress";
+ 
+ /**
+- * Sends the order to the warehouse when it is ready. Called by every handler
+- * that can make an order ready (created, paid, items updated), so dispatch
+- * happens no matter which of those events arrives last.
++ * Sends the order to the warehouse when it is ready: paid, not canceled, not
++ * dispatched, and with known items. Called by every handler that can make an
++ * order ready (created, paid, items updated), so dispatch happens no matter
++ * which of those events arrives last.
++ *
++ * Exactly once: several workers can reach this point for the same order at
++ * the same time. Before calling the warehouse we take a claim with a single
++ * conditional UPDATE (`claimDispatch`); only the worker whose UPDATE changed
++ * the row calls the warehouse. The claim token is the triggering event id, so
++ * a redelivery of that same event (after a crash) can resume its own claim.
+  */
+-export async function maybeDispatch(ctx: HandlerContext, orderId: string, trigger: string): Promise<DispatchResult> {
++export async function maybeDispatch(
++  ctx: HandlerContext,
++  orderId: string,
++  trigger: Pick<EventEnvelope, "id" | "type">,
++): Promise<DispatchResult> {
+   const order = getOrder(ctx.db, orderId);
+   if (!order) throw new PermanentError("order_missing", `maybeDispatch called for unknown order ${orderId}`);
+   if (!order.paid_at) return "not_paid";
+@@ -19,31 +45,53 @@ export async function maybeDispatch(ctx: HandlerContext, orderId: string, trigge
+   if (order.dispatched_at) return "already_dispatched";
+ 
+   const items = listOrderItems(ctx.db, orderId);
+-  // TODO(fulfillment): the warehouse team asked us to stop sending orders
+-  // before their items are known; they currently fix those by hand.
+-  const result = await ctx.warehouse.createFulfillment({
+-    order_id: orderId,
+-    customer_email: order.customer_email,
+-    lines: items.map((item) => ({ sku: item.sku, quantity: item.quantity })),
+-  });
++  if (items.length === 0) {
++    // Not an error: order.items_updated (or order.created) will call us again.
++    ctx.log.info({ event: "fulfillment.waiting_for_items", order_id: orderId, trigger: trigger.type });
++    ctx.metrics.increment("fulfillment_waiting_for_items", { trigger: trigger.type });
++    return "waiting_for_items";
++  }
++
++  const claimedAt = now(ctx);
++  const staleBefore = toIso(ctx.clock.now() - DISPATCH_CLAIM_TTL_MS);
++  if (!claimDispatch(ctx.db, orderId, trigger.id, claimedAt, staleBefore)) {
++    // Another worker holds the claim (or just finished). It owns the outcome:
++    // on success it marks the order dispatched, on failure its event is retried.
++    ctx.log.info({ event: "fulfillment.claim_contended", order_id: orderId, trigger: trigger.type });
++    ctx.metrics.increment("fulfillment_claim_contended", { trigger: trigger.type });
++    return "in_progress";
++  }
++
++  let fulfillmentId: string;
++  try {
++    const result = await ctx.warehouse.createFulfillment({
++      order_id: orderId,
++      customer_email: order.customer_email,
++      lines: items.map((item) => ({ sku: item.sku, quantity: item.quantity })),
++    });
++    fulfillmentId = result.fulfillment_id;
++  } catch (err) {
++    releaseDispatchClaim(ctx.db, orderId, trigger.id);
++    throw err;
++  }
+ 
+   const at = now(ctx);
+-  markDispatched(ctx.db, orderId, result.fulfillment_id, at);
++  markDispatched(ctx.db, orderId, fulfillmentId, at);
+   recordDomainEvent(ctx.db, {
+     id: `dispatched:${orderId}`,
+     order_id: orderId,
+     type: "order.dispatched",
+-    payload: { fulfillment_id: result.fulfillment_id, lines: items.length, trigger },
++    payload: { fulfillment_id: fulfillmentId, lines: items.length, trigger: trigger.type },
+     occurred_at: at,
+   });
+   refreshOrderStatus(ctx, orderId);
+-  ctx.metrics.increment("fulfillment_dispatched", { trigger });
++  ctx.metrics.increment("fulfillment_dispatched", { trigger: trigger.type });
+   ctx.log.info({
+     event: "fulfillment.dispatched",
+     order_id: orderId,
+-    fulfillment_id: result.fulfillment_id,
++    fulfillment_id: fulfillmentId,
+     lines: items.length,
+-    trigger,
++    trigger: trigger.type,
+   });
+   return "dispatched";
+ }
+diff --git a/src/handlers/items.ts b/src/handlers/items.ts
+index c982781..1074754 100644
+--- a/src/handlers/items.ts
++++ b/src/handlers/items.ts
+@@ -67,6 +67,6 @@ export async function applyItemsUpdated(
+   const outcome = applyItemsSnapshot(ctx, orderId, envelope.payload.items, envelope.occurred_at);
+   refreshOrderStatus(ctx, orderId);
+   // Items may be the last missing piece (order already paid).
+-  await maybeDispatch(ctx, orderId, envelope.type);
++  await maybeDispatch(ctx, orderId, envelope);
+   return outcome;
+ }
+diff --git a/src/handlers/orders.ts b/src/handlers/orders.ts
+index 156d32d..c9ecf12 100644
+--- a/src/handlers/orders.ts
++++ b/src/handlers/orders.ts
+@@ -37,7 +37,7 @@ export async function applyOrderCreated(
+   );
+   applyItemsSnapshot(ctx, p.order_id, p.items, envelope.occurred_at);
+   refreshOrderStatus(ctx, p.order_id);
+-  await maybeDispatch(ctx, p.order_id, envelope.type);
++  await maybeDispatch(ctx, p.order_id, envelope);
+   return before.created_at ? "noop" : "applied";
+ }
+ 
+@@ -64,7 +64,7 @@ export async function applyOrderPaid(
+     outcome = "applied";
+   }
+   refreshOrderStatus(ctx, p.order_id);
+-  await maybeDispatch(ctx, p.order_id, envelope.type);
++  await maybeDispatch(ctx, p.order_id, envelope);
+   return outcome;
+ }
+ 
+diff --git a/test/dispatch.test.ts b/test/dispatch.test.ts
+new file mode 100644
+index 0000000..b67a6b7
+--- /dev/null
++++ b/test/dispatch.test.ts
+@@ -0,0 +1,88 @@
++import assert from "node:assert/strict";
++import { describe, it } from "node:test";
++import { FakeWarehouse } from "../src/adapters/fake-warehouse.ts";
++import { openDatabase } from "../src/db/database.ts";
++import { claimDispatch, getOrder, releaseDispatchClaim } from "../src/db/orders-repo.ts";
++import { DISPATCH_CLAIM_TTL_MS } from "../src/fulfillment/dispatch.ts";
++import { createManualClock, toIso } from "../src/lib/clock.ts";
++import { createMetrics } from "../src/lib/metrics.ts";
++import { createPipeline } from "../src/pipeline.ts";
++import { created, ev, ITEMS, minutes, paid, setup } from "./helpers.ts";
++
++describe("claimDispatch", () => {
++  it("lets exactly one token claim, honors ownership and staleness", async () => {
++    const { pipeline, db } = setup();
++    pipeline.publish(created("o1", { items: null }));
++    pipeline.publish(paid("o1"));
++    await pipeline.drain();
++
++    const t0 = minutes(100);
++    const stale = toIso(Date.parse(t0) - DISPATCH_CLAIM_TTL_MS);
++    assert.equal(claimDispatch(db, "o1", "a", t0, stale), true);
++    assert.equal(claimDispatch(db, "o1", "b", t0, stale), false);
++    assert.equal(claimDispatch(db, "o1", "a", t0, stale), true, "owner can resume its claim");
++
++    const later = toIso(Date.parse(t0) + DISPATCH_CLAIM_TTL_MS + 1);
++    assert.equal(claimDispatch(db, "o1", "b", later, toIso(Date.parse(later) - DISPATCH_CLAIM_TTL_MS)), true, "stale claim is taken over");
++
++    releaseDispatchClaim(db, "o1", "a");
++    assert.equal(getOrder(db, "o1")?.dispatch_claim_token, "b", "only the owner can release");
++  });
++});
++
++describe("maybeDispatch", () => {
++  it("waits for items instead of dispatching an empty order", async () => {
++    const { pipeline, db, warehouse, metrics } = setup();
++    pipeline.publish(paid("o1"));
++    await pipeline.drain();
++    assert.equal(warehouse.calls.length, 0);
++    assert.equal(getOrder(db, "o1")?.status, "paid");
++    assert.equal(metrics.total("fulfillment_waiting_for_items"), 1);
++
++    pipeline.publish(created("o1"));
++    await pipeline.drain();
++    assert.equal(warehouse.calls.length, 1);
++    assert.equal(warehouse.calls[0]?.lines.length, ITEMS.length);
++  });
++
++  it("dispatches once when paid and items_updated share a batch", async () => {
++    const { pipeline, warehouse, metrics } = setup();
++    pipeline.publish(created("o1"));
++    await pipeline.drain();
++    pipeline.publish(paid("o1"));
++    pipeline.publish(ev("order.items_updated", { order_id: "o1", items: ITEMS }));
++    pipeline.publish(paid("o1", { id: "redelivered-with-new-id" }));
++    await pipeline.drain();
++    assert.equal(warehouse.calls.length, 1);
++    assert.equal(metrics.total("fulfillment_claim_contended"), 2);
++  });
++
++  it("dispatches once across two workers sharing the database", async () => {
++    const clock = createManualClock();
++    const db = openDatabase();
++    const warehouse = new FakeWarehouse({ latencyTicks: 5 });
++    const metrics = createMetrics();
++    const a = createPipeline({ db, warehouse, clock, metrics, random: () => 0.5 });
++    const b = createPipeline({ db, warehouse, clock, metrics, random: () => 0.5 });
++    a.publish(created("o1"));
++    await a.drain();
++    a.publish(paid("o1", { id: "p-a" }));
++    b.publish(paid("o1", { id: "p-b" }));
++    await Promise.all([a.drain(), b.drain()]);
++    assert.equal(warehouse.calls.length, 1);
++    assert.ok(getOrder(db, "o1")?.dispatched_at);
++  });
++
++  it("releases the claim when the warehouse fails so the retry can dispatch", async () => {
++    const { pipeline, db, warehouse, clock } = setup();
++    pipeline.publish(created("o1"));
++    await pipeline.drain();
++    warehouse.failNext(1);
++    pipeline.publish(paid("o1"));
++    await pipeline.drain();
++    assert.equal(getOrder(db, "o1")?.dispatch_claim_token, null);
++    clock.advance(60_000);
++    await pipeline.drain();
++    assert.equal(warehouse.calls.length, 1);
++  });
++});

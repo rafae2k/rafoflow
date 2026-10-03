@@ -1,0 +1,356 @@
+diff --git a/docs/event-flow.md b/docs/event-flow.md
+index 3e0f97e..ed784ba 100644
+--- a/docs/event-flow.md
++++ b/docs/event-flow.md
+@@ -40,13 +40,18 @@ Untrusted input enters through `Pipeline.ingest` (`src/pipeline.ts`), which call
+ | `order.items_updated` | `applyItemsUpdated` | `src/handlers/items.ts` |
+ | `shipment.created` | `applyShipmentCreated` | `src/handlers/shipments.ts` |
+ | `shipment.delivered` | `applyShipmentDelivered` | `src/handlers/shipments.ts` |
++| `order.partially_refunded` | `applyPartialRefund` | `src/handlers/refunds.ts` |
+ 
+ Rules shared by all handlers:
+ 
+ - **Stub orders.** Any event can arrive before `order.created`. `ensureOrder` (`src/db/orders-repo.ts`) creates a stub row that `order.created` fills in later.
+ - **Status is derived.** Handlers record facts (`paid_at`, `canceled_at`, shipments) and call `refreshOrderStatus`, which uses `deriveStatus` (`src/domain/status.ts`). No handler sets `status` by hand.
+ - **Items are snapshots.** `order.created` and `order.items_updated` carry the full list of items. `applyItemsSnapshot` (`src/handlers/items.ts`) replaces the stored items with `replaceOrderItems`, last-writer-wins by `occurred_at` (`orders.items_as_of`): an older snapshot arriving late is ignored. When the event has no `items` field, the list is unknown and stored items are left untouched (`items_snapshot_missing` metric).
+-- **Domain events.** Business facts derived from vendor events are written once with `recordDomainEvent` into `domain_events`, keyed by a natural id (`dispatched:<order>`, `shipped:<shipment>`, `delivered:<shipment>`, `canceled:<order>`). Downstream consumers (CRM, notifications) read this table; read it with `listDomainEvents`.
++- **Domain events.** Business facts derived from vendor events are written once with `recordDomainEvent` into `domain_events`, keyed by a natural id (`dispatched:<order>`, `shipped:<shipment>`, `delivered:<shipment>`, `canceled:<order>`, `refunded:<refund>`). Downstream consumers (CRM, notifications) read this table; read it with `listDomainEvents`.
++
++## Partial refunds
++
++`order.partially_refunded` carries `refund_id`, `amount_cents` and `lines` (`sku`, `quantity`). `applyPartialRefund` (`src/handlers/refunds.ts`) records the refund in the `refunds` table (keyed by `refund_id`, so a refund redelivered under a new envelope id is applied once), lowers `orders.total_cents` by the amount and each refunded item's quantity, and records the `order.partially_refunded` domain event (`refunded:<refund_id>`). A refund that arrives before its order or items is retried (`refund_order_not_ready`, `refund_item_unknown`); one that refunds more than was bought is dead-lettered (`refund_exceeds_quantity`, `refund_exceeds_total`). Refunds never trigger a new warehouse dispatch. Read them with `listRefunds` (`src/db/refunds-repo.ts`).
+ 
+ ## Adding an event type
+ 
+diff --git a/src/db/items-repo.ts b/src/db/items-repo.ts
+index 293b423..32de858 100644
+--- a/src/db/items-repo.ts
++++ b/src/db/items-repo.ts
+@@ -25,6 +25,11 @@ export function countOrderItems(db: Db, orderId: string): number {
+   return row ? num(row.n) : 0;
+ }
+ 
++/** Lowers one item's quantity (refunds). Callers validate the quantity first. */
++export function decrementItemQuantity(db: Db, orderId: string, sku: string, quantity: number): void {
++  db.prepare("UPDATE order_items SET quantity = quantity - ? WHERE order_id = ? AND sku = ?").run(quantity, orderId, sku);
++}
++
+ /** Delete-and-replace of the order's items, atomically. */
+ export function replaceOrderItems(db: Db, orderId: string, items: readonly LineItemInput[]): void {
+   transaction(db, () => {
+diff --git a/src/db/migrations.ts b/src/db/migrations.ts
+index ece6c22..be3edc4 100644
+--- a/src/db/migrations.ts
++++ b/src/db/migrations.ts
+@@ -87,6 +87,21 @@ export const MIGRATIONS: readonly Migration[] = [
+       CREATE INDEX domain_events_order_idx ON domain_events (order_id, occurred_at);
+     `,
+   },
++  {
++    version: 4,
++    name: "refunds",
++    sql: `
++      CREATE TABLE refunds (
++        id TEXT PRIMARY KEY,
++        order_id TEXT NOT NULL,
++        amount_cents INTEGER NOT NULL,
++        lines_json TEXT NOT NULL,
++        occurred_at TEXT NOT NULL,
++        applied_at TEXT NOT NULL
++      );
++      CREATE INDEX refunds_order_idx ON refunds (order_id);
++    `,
++  },
+ ];
+ 
+ export function migrate(db: DatabaseSync, migrations: readonly Migration[] = MIGRATIONS): number[] {
+diff --git a/src/db/refunds-repo.ts b/src/db/refunds-repo.ts
+new file mode 100644
+index 0000000..94d6dbe
+--- /dev/null
++++ b/src/db/refunds-repo.ts
+@@ -0,0 +1,36 @@
++import type { RefundLine } from "../events/types.ts";
++import { num, str, type Db } from "./database.ts";
++
++export interface Refund {
++  id: string;
++  order_id: string;
++  amount_cents: number;
++  lines: RefundLine[];
++  occurred_at: string;
++  applied_at: string;
++}
++
++/** @returns false when this refund id was already recorded. */
++export function insertRefund(db: Db, refund: Refund): boolean {
++  const result = db
++    .prepare(
++      `INSERT INTO refunds (id, order_id, amount_cents, lines_json, occurred_at, applied_at)
++       VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (id) DO NOTHING`,
++    )
++    .run(refund.id, refund.order_id, refund.amount_cents, JSON.stringify(refund.lines), refund.occurred_at, refund.applied_at);
++  return Number(result.changes) === 1;
++}
++
++export function listRefunds(db: Db, orderId: string): Refund[] {
++  return db
++    .prepare("SELECT * FROM refunds WHERE order_id = ? ORDER BY occurred_at, id")
++    .all(orderId)
++    .map((row) => ({
++      id: str(row.id),
++      order_id: str(row.order_id),
++      amount_cents: num(row.amount_cents),
++      lines: JSON.parse(str(row.lines_json)) as RefundLine[],
++      occurred_at: str(row.occurred_at),
++      applied_at: str(row.applied_at),
++    }));
++}
+diff --git a/src/events/types.ts b/src/events/types.ts
+index 3ecac86..7076b6d 100644
+--- a/src/events/types.ts
++++ b/src/events/types.ts
+@@ -9,6 +9,7 @@ export const EVENT_TYPES = [
+   "shipment.created",
+   "shipment.delivered",
+   "order.canceled",
++  "order.partially_refunded",
+ ] as const;
+ 
+ export type EventType = (typeof EVENT_TYPES)[number];
+@@ -60,6 +61,19 @@ export interface OrderCanceledPayload {
+   reason?: string;
+ }
+ 
++export interface RefundLine {
++  sku: string;
++  quantity: number;
++}
++
++export interface OrderPartiallyRefundedPayload {
++  order_id: string;
++  /** Vendor refund id; one refund can be redelivered under new envelope ids. */
++  refund_id: string;
++  amount_cents: number;
++  lines: RefundLine[];
++}
++
+ export interface PayloadByType {
+   "order.created": OrderCreatedPayload;
+   "order.paid": OrderPaidPayload;
+@@ -67,6 +81,7 @@ export interface PayloadByType {
+   "shipment.created": ShipmentCreatedPayload;
+   "shipment.delivered": ShipmentDeliveredPayload;
+   "order.canceled": OrderCanceledPayload;
++  "order.partially_refunded": OrderPartiallyRefundedPayload;
+ }
+ 
+ export function isEventType(value: unknown): value is EventType {
+diff --git a/src/handlers/index.ts b/src/handlers/index.ts
+index a97486b..052e66b 100644
+--- a/src/handlers/index.ts
++++ b/src/handlers/index.ts
+@@ -3,6 +3,7 @@ import type { EventType } from "../events/types.ts";
+ import type { Handler, HandlerContext, HandlerOutcome } from "./context.ts";
+ import { applyItemsUpdated } from "./items.ts";
+ import { applyOrderCanceled, applyOrderCreated, applyOrderPaid } from "./orders.ts";
++import { applyPartialRefund } from "./refunds.ts";
+ import { applyShipmentCreated, applyShipmentDelivered } from "./shipments.ts";
+ 
+ export type HandlerRegistry = { [K in EventType]: Handler<K> };
+@@ -14,6 +15,7 @@ export const HANDLERS: HandlerRegistry = {
+   "shipment.created": applyShipmentCreated,
+   "shipment.delivered": applyShipmentDelivered,
+   "order.canceled": applyOrderCanceled,
++  "order.partially_refunded": applyPartialRefund,
+ };
+ 
+ export function handleEvent(ctx: HandlerContext, envelope: AnyEnvelope): Promise<HandlerOutcome> {
+diff --git a/src/handlers/refunds.ts b/src/handlers/refunds.ts
+new file mode 100644
+index 0000000..92b7bcc
+--- /dev/null
++++ b/src/handlers/refunds.ts
+@@ -0,0 +1,94 @@
++import { recordDomainEvent } from "../db/bookkeeping-repo.ts";
++import { transaction } from "../db/database.ts";
++import { decrementItemQuantity, listOrderItems } from "../db/items-repo.ts";
++import { getOrder, updateOrder } from "../db/orders-repo.ts";
++import { insertRefund } from "../db/refunds-repo.ts";
++import type { EventEnvelope } from "../events/envelope.ts";
++import type { RefundLine } from "../events/types.ts";
++import { PermanentError, RetryableError } from "../lib/errors.ts";
++import { now, type HandlerContext, type HandlerOutcome } from "./context.ts";
++
++function validateLines(lines: unknown): RefundLine[] {
++  if (!Array.isArray(lines) || lines.length === 0) {
++    throw new PermanentError("invalid_refund", "lines must be a non-empty array");
++  }
++  return lines.map((raw, index) => {
++    const line = raw as Partial<RefundLine> | null;
++    if (!line || typeof line.sku !== "string" || !Number.isInteger(line.quantity) || (line.quantity as number) <= 0) {
++      throw new PermanentError("invalid_refund", `lines[${index}] needs a sku and a positive quantity`);
++    }
++    return { sku: line.sku, quantity: line.quantity as number };
++  });
++}
++
++/**
++ * Applies a partial refund: lowers the order total and the refunded item
++ * quantities, and records `order.partially_refunded` once per refund id.
++ *
++ * Order-independent: a refund that arrives before `order.created` (or before
++ * the items it refers to) is retried with backoff instead of being dropped.
++ */
++export async function applyPartialRefund(
++  ctx: HandlerContext,
++  envelope: EventEnvelope<"order.partially_refunded">,
++): Promise<HandlerOutcome> {
++  const p = envelope.payload;
++  if (typeof p.refund_id !== "string" || p.refund_id.length === 0) {
++    throw new PermanentError("invalid_refund", "refund_id is required");
++  }
++  if (!Number.isInteger(p.amount_cents) || p.amount_cents <= 0) {
++    throw new PermanentError("invalid_refund", "amount_cents must be a positive integer");
++  }
++  const lines = validateLines(p.lines);
++
++  const order = getOrder(ctx.db, p.order_id);
++  if (!order || order.created_at === null || order.total_cents === null) {
++    throw new RetryableError("refund_order_not_ready", `order ${p.order_id} not created yet`);
++  }
++  const totalCents = order.total_cents;
++  const items = new Map(listOrderItems(ctx.db, p.order_id).map((i) => [i.sku, i]));
++
++  const at = now(ctx);
++  const applied = transaction(ctx.db, () => {
++    const isNew = insertRefund(ctx.db, {
++      id: p.refund_id,
++      order_id: p.order_id,
++      amount_cents: p.amount_cents,
++      lines,
++      occurred_at: envelope.occurred_at,
++      applied_at: at,
++    });
++    if (!isNew) return false;
++    for (const line of lines) {
++      const item = items.get(line.sku);
++      if (!item) throw new RetryableError("refund_item_unknown", `order ${p.order_id} has no item ${line.sku} yet`);
++      if (line.quantity > item.quantity) {
++        throw new PermanentError("refund_exceeds_quantity", `refunding ${line.quantity} of ${item.quantity} ${line.sku}`);
++      }
++      decrementItemQuantity(ctx.db, p.order_id, line.sku, line.quantity);
++    }
++    if (p.amount_cents > totalCents) {
++      throw new PermanentError("refund_exceeds_total", `refund ${p.amount_cents} > total ${totalCents}`);
++    }
++    // An items snapshot older than this refund must not roll the quantities back.
++    const asOf = order.items_as_of && order.items_as_of > envelope.occurred_at ? order.items_as_of : envelope.occurred_at;
++    updateOrder(ctx.db, p.order_id, { total_cents: totalCents - p.amount_cents, items_as_of: asOf }, at);
++    recordDomainEvent(ctx.db, {
++      id: `refunded:${p.refund_id}`,
++      order_id: p.order_id,
++      type: "order.partially_refunded",
++      payload: { refund_id: p.refund_id, amount_cents: p.amount_cents, lines },
++      occurred_at: envelope.occurred_at,
++    });
++    return true;
++  });
++
++  if (!applied) {
++    ctx.log.info({ event: "refund.already_applied", order_id: p.order_id, refund_id: p.refund_id });
++    ctx.metrics.increment("refund_already_applied");
++    return "noop";
++  }
++  ctx.metrics.increment("order_partially_refunded");
++  ctx.log.info({ event: "refund.applied", order_id: p.order_id, refund_id: p.refund_id, amount_cents: p.amount_cents });
++  return "applied";
++}
+diff --git a/src/index.ts b/src/index.ts
+index 44e0e40..8acc64d 100644
+--- a/src/index.ts
++++ b/src/index.ts
+@@ -4,6 +4,7 @@ export * from "./db/bookkeeping-repo.ts";
+ export { openDatabase, transaction, type Db } from "./db/database.ts";
+ export { listOrderItems, type OrderItem } from "./db/items-repo.ts";
+ export { getOrder, listOrders, type Order, type OrderStatus } from "./db/orders-repo.ts";
++export { listRefunds, type Refund } from "./db/refunds-repo.ts";
+ export { listShipments, type Shipment } from "./db/shipments-repo.ts";
+ export { computeBackoffMs, DEFAULT_BACKOFF, DEFAULT_MAX_ATTEMPTS } from "./dispatcher.ts";
+ export { createEnvelope, parseEnvelope, type AnyEnvelope, type EventEnvelope } from "./events/envelope.ts";
+diff --git a/test/refunds.test.ts b/test/refunds.test.ts
+new file mode 100644
+index 0000000..830bdc1
+--- /dev/null
++++ b/test/refunds.test.ts
+@@ -0,0 +1,70 @@
++import assert from "node:assert/strict";
++import { describe, it } from "node:test";
++import { listDeadLetters, listDomainEvents } from "../src/db/bookkeeping-repo.ts";
++import { listOrderItems } from "../src/db/items-repo.ts";
++import { getOrder } from "../src/db/orders-repo.ts";
++import { listRefunds } from "../src/db/refunds-repo.ts";
++import { created, ev, minutes, paid, setup } from "./helpers.ts";
++
++function refund(orderId: string, refundId: string, opts: { id?: string; at?: string; quantity?: number } = {}) {
++  return ev(
++    "order.partially_refunded",
++    { order_id: orderId, refund_id: refundId, amount_cents: 15900, lines: [{ sku: "WHEY-900", quantity: opts.quantity ?? 1 }] },
++    opts,
++  );
++}
++
++describe("partial refunds", () => {
++  it("lowers total and quantities and records a domain event", async () => {
++    const { pipeline, db, warehouse } = setup();
++    pipeline.publish(created("o1", { at: minutes(1) }));
++    pipeline.publish(paid("o1", { at: minutes(2) }));
++    await pipeline.drain();
++    pipeline.publish(refund("o1", "r1", { at: minutes(10) }));
++    await pipeline.drain();
++
++    assert.equal(getOrder(db, "o1")?.total_cents, 40700 - 15900);
++    assert.equal(listOrderItems(db, "o1").find((i) => i.sku === "WHEY-900")?.quantity, 1);
++    assert.equal(listRefunds(db, "o1").length, 1);
++    assert.deepEqual(
++      listDomainEvents(db, "o1").map((e) => e.type),
++      ["order.dispatched", "order.partially_refunded"],
++    );
++    assert.equal(warehouse.calls.length, 1);
++  });
++
++  it("applies the same refund id once even under a new envelope id", async () => {
++    const { pipeline, db } = setup();
++    pipeline.publish(created("o1", { at: minutes(1) }));
++    await pipeline.drain();
++    pipeline.publish(refund("o1", "r1", { id: "a", at: minutes(10) }));
++    await pipeline.drain();
++    pipeline.publish(refund("o1", "r1", { id: "b", at: minutes(10) }));
++    await pipeline.drain();
++    assert.equal(getOrder(db, "o1")?.total_cents, 40700 - 15900);
++    assert.equal(listOrderItems(db, "o1").find((i) => i.sku === "WHEY-900")?.quantity, 1);
++  });
++
++  it("waits for the order when the refund arrives first", async () => {
++    const { pipeline, db, clock } = setup();
++    pipeline.publish(refund("o1", "r1", { at: minutes(10) }));
++    const first = await pipeline.drain();
++    assert.equal(first.retry_scheduled, 1);
++    pipeline.publish(created("o1", { at: minutes(1) }));
++    await pipeline.drain();
++    clock.advance(60_000);
++    await pipeline.drain();
++    assert.equal(getOrder(db, "o1")?.total_cents, 40700 - 15900);
++  });
++
++  it("dead-letters a refund for more than was bought, without partial writes", async () => {
++    const { pipeline, db } = setup();
++    pipeline.publish(created("o1", { at: minutes(1) }));
++    await pipeline.drain();
++    pipeline.publish(refund("o1", "r1", { quantity: 5 }));
++    await pipeline.drain();
++    assert.equal(listDeadLetters(db)[0]?.error_slug, "refund_exceeds_quantity");
++    assert.equal(getOrder(db, "o1")?.total_cents, 40700);
++    assert.equal(listRefunds(db, "o1").length, 0);
++  });
++});

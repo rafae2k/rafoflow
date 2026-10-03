@@ -1,0 +1,290 @@
+diff --git a/docs/authoring.md b/docs/authoring.md
+index eb7b249..df0de78 100644
+--- a/docs/authoring.md
++++ b/docs/authoring.md
+@@ -20,6 +20,7 @@ description: How to install the tool
+ | `order` | number | Position among siblings in the navigation. Pages without it come after ordered ones. |
+ | `description` | string | Goes into `<meta name="description">`. |
+ | `draft` | boolean | `true` leaves the page out of the build. Links to a draft are broken links. |
++| `toc` | boolean | `false` removes the table of contents from this page. Default `true`. |
+ 
+ Any other key is kept in `page.data` for plugins. All values are escaped when they reach HTML.
+ 
+@@ -27,7 +28,7 @@ Any other key is kept in `page.data` for plugins. All values are escaped when th
+ 
+ `renderMarkdown` (`src/markdown/render.ts`) supports:
+ 
+-- ATX headings `#` to `######`. Each heading gets an `id` made by `slugify` (`src/html.ts`) from its text, e.g. `## Getting started` → `id="getting-started"`.
++- ATX headings `#` to `######`. Each heading gets an `id` made by `slugify` (`src/html.ts`) from its text, e.g. `## Getting started` → `id="getting-started"`. Ids are unique within a page: when two headings have the same text, the second gets `-1`, the third `-2`, and so on (`## Intro` twice → `intro`, `intro-1`).
+ - Paragraphs (consecutive lines are joined).
+ - Fenced code blocks with ` ``` ` or `~~~` and an optional language (`class="language-ts"`).
+ - Flat bullet (`-`, `*`, `+`) and numbered (`1.`) lists; indented lines continue the previous item.
+@@ -35,6 +36,10 @@ Any other key is kept in `page.data` for plugins. All values are escaped when th
+ 
+ Raw HTML is **not** passed through: `<div>` in a page shows up as text. Links with schemes other than `http:`, `https:` and `mailto:` are replaced by `#`.
+ 
++## Table of contents
++
++Every page gets a table of contents built from its `##` and `###` headings, in document order, each entry linking to the heading's id; `###` entries are nested under the preceding `##`. It is rendered by `renderToc` (`src/markdown/toc.ts`) and exposed to layouts as `{{{toc}}}` (the default layout puts it above the content). Pages without `##`/`###` headings get no table of contents, and `toc: false` in the front matter turns it off for one page.
++
+ ## Links between pages
+ 
+ Link to other pages by their Markdown source path, relative to the current file — `[Install](install.md)`, `[Home](../index.md)` — or root-relative with a leading `/` (`[Home](/index.md)`). `rewriteLinks` (`src/links/rewrite.ts`) turns these into relative links between the output files, using `resolveLink` (`src/links/resolve.ts`). To point at a section of another page, add the heading's id: `[Requirements](install.md#requirements)`.
+@@ -47,4 +52,4 @@ The navigation tree mirrors the folder structure (`buildNavTree`, `src/nav/tree.
+ 
+ ## Layout
+ 
+-Pages are wrapped in `_layout.html` from the source dir if present, otherwise in `DEFAULT_LAYOUT` (`src/template/default-layout.ts`). Templates use `{{name}}` for escaped values and `{{{name}}}` for generator-produced HTML. Available variables: `site.title`, `site.lang`, `page.title`, `page.description`, `page.route`, `page.sourcePath`, `rootUrl`, `nav` (raw), `content` (raw), `buildDate` (only when a date is injected) and plugin variables such as `readingTime`.
++Pages are wrapped in `_layout.html` from the source dir if present, otherwise in `DEFAULT_LAYOUT` (`src/template/default-layout.ts`). Templates use `{{name}}` for escaped values and `{{{name}}}` for generator-produced HTML. Available variables: `site.title`, `site.lang`, `page.title`, `page.description`, `page.route`, `page.sourcePath`, `rootUrl`, `nav` (raw), `toc` (raw), `content` (raw), `buildDate` (only when a date is injected) and plugin variables such as `readingTime`.
+diff --git a/docs/plugins.md b/docs/plugins.md
+index c42e67c..60610df 100644
+--- a/docs/plugins.md
++++ b/docs/plugins.md
+@@ -20,7 +20,7 @@ Called once per page, after Markdown rendering and link rewriting, before the la
+ - `ctx.page` — a **frozen** deep copy of the page: `sourcePath`, `route`, `title`, `order`, `description`, `data` (all front matter), `body` (Markdown) and `headings`. Assigning to it throws.
+ - `ctx.site` — frozen summaries of every page in the build.
+ - `ctx.html` — the rendered page HTML. A plugin may replace it. It is inserted into the layout raw, so a plugin must escape anything it adds.
+-- `ctx.vars` — template variables for this page. They are escaped by `{{name}}` like any other value. The generator's own names (`site`, `page`, `nav`, `content`, `rootUrl`, `buildDate`) are reserved; setting one fails the build with a `PluginError`.
++- `ctx.vars` — template variables for this page. They are escaped by `{{name}}` like any other value. The generator's own names (`site`, `page`, `nav`, `toc`, `content`, `rootUrl`, `buildDate`) are reserved; setting one fails the build with a `PluginError`.
+ 
+ A plugin can never change another page, or the current page's data (AGENTS.md invariant 4).
+ 
+diff --git a/src/build.ts b/src/build.ts
+index 8601beb..ad53943 100644
+--- a/src/build.ts
++++ b/src/build.ts
+@@ -5,6 +5,7 @@ import { BrokenLinkError, type BrokenLink } from "./errors.ts";
+ import type { FileSystem } from "./fs/types.ts";
+ import { rewriteLinks } from "./links/rewrite.ts";
+ import { type Heading, renderMarkdown } from "./markdown/render.ts";
++import { renderToc } from "./markdown/toc.ts";
+ import { buildNavTree, renderNav } from "./nav/tree.ts";
+ import { resolveOutputPath, rootPrefix } from "./paths.ts";
+ import { deepFreeze, runPageHooks } from "./plugins/runner.ts";
+@@ -82,6 +83,7 @@ export async function build(options: BuildOptions): Promise<BuildResult> {
+       page: { title: page.title, description: page.description, route: page.route, sourcePath: page.sourcePath },
+       rootUrl: rootPrefix(page.route),
+       nav: renderNav(nav, page.route),
++      toc: page.toc ? renderToc(headings) : "",
+       content: hooked.html,
+       buildDate: options.now ? options.now.toISOString().slice(0, 10) : undefined,
+     };
+diff --git a/src/content/page.ts b/src/content/page.ts
+index e6b2466..f676542 100644
+--- a/src/content/page.ts
++++ b/src/content/page.ts
+@@ -12,6 +12,8 @@ export interface Page {
+   /** Navigation order from front matter; pages without it sort after ordered ones. */
+   order: number | undefined;
+   draft: boolean;
++  /** Whether the page gets a table of contents (front matter `toc: false` turns it off). */
++  toc: boolean;
+   description: string | undefined;
+   data: FrontMatter;
+   /** Markdown body without the front matter. */
+@@ -35,6 +37,9 @@ export function createPage(sourcePath: string, raw: string): Page {
+   if (data.draft !== undefined && typeof data.draft !== "boolean") {
+     throw new FrontMatterError(sourcePath, `"draft" must be true or false`);
+   }
++  if (data.toc !== undefined && typeof data.toc !== "boolean") {
++    throw new FrontMatterError(sourcePath, `"toc" must be true or false`);
++  }
+   if (data.title !== undefined && typeof data.title !== "string") {
+     throw new FrontMatterError(sourcePath, `"title" must be a string`);
+   }
+@@ -47,6 +52,7 @@ export function createPage(sourcePath: string, raw: string): Page {
+     title,
+     order: typeof data.order === "number" ? data.order : undefined,
+     draft: data.draft === true,
++    toc: data.toc !== false,
+     description: typeof data.description === "string" ? data.description : undefined,
+     data,
+     body,
+diff --git a/src/index.ts b/src/index.ts
+index c16a669..3387e51 100644
+--- a/src/index.ts
++++ b/src/index.ts
+@@ -12,6 +12,7 @@ export { resolveLink } from "./links/resolve.ts";
+ export { rewriteLinks } from "./links/rewrite.ts";
+ export { renderInline } from "./markdown/inline.ts";
+ export { renderMarkdown, type Heading, type RenderResult } from "./markdown/render.ts";
++export { renderToc } from "./markdown/toc.ts";
+ export { buildNavTree, renderNav, type NavNode } from "./nav/tree.ts";
+ export { relativeUrl, resolveOutputPath, routeForSource } from "./paths.ts";
+ export { readingTime } from "./plugins/reading-time.ts";
+diff --git a/src/markdown/render.ts b/src/markdown/render.ts
+index 24799ab..939017a 100644
+--- a/src/markdown/render.ts
++++ b/src/markdown/render.ts
+@@ -28,6 +28,7 @@ export function renderMarkdown(source: string): RenderResult {
+   const lines = source.replace(/\r\n?/g, "\n").split("\n");
+   const blocks: string[] = [];
+   const headings: Heading[] = [];
++  const ids = new UniqueIds();
+   let i = 0;
+ 
+   while (i < lines.length) {
+@@ -57,8 +58,7 @@ export function renderMarkdown(source: string): RenderResult {
+       const level = (heading[1] as string).length;
+       const raw = heading[2] as string;
+       const text = inlineToText(raw);
+-      // TODO: two headings with the same text get the same id.
+-      const id = slugify(text);
++      const id = ids.claim(slugify(text));
+       headings.push({ level, text, id });
+       blocks.push(`<h${level} id="${escapeAttr(id)}">${renderInline(raw)}</h${level}>`);
+       i++;
+@@ -83,6 +83,27 @@ export function renderMarkdown(source: string): RenderResult {
+   return { html: blocks.join("\n"), headings };
+ }
+ 
++/**
++ * Hands out unique ids within one page: the first "intro" stays "intro", the
++ * next ones become "intro-1", "intro-2", ... skipping ids already taken.
++ */
++class UniqueIds {
++  readonly #taken = new Set<string>();
++  readonly #counters = new Map<string, number>();
++
++  claim(base: string): string {
++    let id = base;
++    let n = this.#counters.get(base) ?? 0;
++    while (this.#taken.has(id)) {
++      n++;
++      id = `${base}-${n}`;
++    }
++    this.#counters.set(base, n);
++    this.#taken.add(id);
++    return id;
++  }
++}
++
+ function startsBlock(line: string): boolean {
+   return FENCE.test(line) || HEADING.test(line) || BULLET.test(line) || ORDERED.test(line);
+ }
+diff --git a/src/markdown/toc.ts b/src/markdown/toc.ts
+new file mode 100644
+index 0000000..e5c34e3
+--- /dev/null
++++ b/src/markdown/toc.ts
+@@ -0,0 +1,40 @@
++import { escapeAttr, escapeHtml } from "../html.ts";
++import type { Heading } from "./render.ts";
++
++/** Heading levels included in the table of contents. */
++export const TOC_LEVELS: readonly number[] = [2, 3];
++
++/**
++ * Renders a page's table of contents from its headings (h2 and h3), linking
++ * to their ids. h3 entries are nested under the preceding h2. Returns "" when
++ * there is nothing to list.
++ */
++export function renderToc(headings: readonly Heading[]): string {
++  const entries = headings.filter((h) => TOC_LEVELS.includes(h.level));
++  if (entries.length === 0) return "";
++
++  let html = '<nav class="toc"><ul>';
++  let openSub = false;
++  let openItem = false;
++  for (const h of entries) {
++    const link = `<a href="#${escapeAttr(h.id)}">${escapeHtml(h.text)}</a>`;
++    if (h.level === 3 && openItem) {
++      if (!openSub) {
++        html += "<ul>";
++        openSub = true;
++      }
++      html += `<li>${link}</li>`;
++      continue;
++    }
++    if (openSub) {
++      html += "</ul>";
++      openSub = false;
++    }
++    if (openItem) html += "</li>";
++    html += `<li>${link}`;
++    openItem = true;
++  }
++  if (openSub) html += "</ul>";
++  if (openItem) html += "</li>";
++  return `${html}</ul></nav>`;
++}
+diff --git a/src/plugins/runner.ts b/src/plugins/runner.ts
+index 8e2ccd2..9412606 100644
+--- a/src/plugins/runner.ts
++++ b/src/plugins/runner.ts
+@@ -4,7 +4,7 @@ import type { Heading } from "../markdown/render.ts";
+ import type { PageHookContext, Plugin, PluginPage } from "./types.ts";
+ 
+ /** Template variable names owned by the generator; plugins cannot set them. */
+-export const RESERVED_VARS: readonly string[] = ["site", "page", "nav", "content", "rootUrl", "buildDate"];
++export const RESERVED_VARS: readonly string[] = ["site", "page", "nav", "toc", "content", "rootUrl", "buildDate"];
+ 
+ export interface PageHookResult {
+   html: string;
+diff --git a/src/template/default-layout.ts b/src/template/default-layout.ts
+index 16f2b0b..af28856 100644
+--- a/src/template/default-layout.ts
++++ b/src/template/default-layout.ts
+@@ -1,7 +1,7 @@
+ /**
+  * Layout used when the source dir has no `_layout.html`. Variables:
+  * site.title, site.lang, page.title, page.description, page.route, rootUrl,
+- * nav (raw), content (raw), plus any plugin variables (e.g. readingTime).
++ * nav (raw), toc (raw), content (raw), plus any plugin variables (e.g. readingTime).
+  */
+ export const DEFAULT_LAYOUT = `<!doctype html>
+ <html lang="{{site.lang}}">
+@@ -17,6 +17,7 @@ export const DEFAULT_LAYOUT = `<!doctype html>
+ <main>
+ <article>
+ <p class="page-meta">{{readingTime}}</p>
++{{{toc}}}
+ {{{content}}}
+ </article>
+ </main>
+diff --git a/test/toc.test.ts b/test/toc.test.ts
+new file mode 100644
+index 0000000..5c5e879
+--- /dev/null
++++ b/test/toc.test.ts
+@@ -0,0 +1,40 @@
++import assert from "node:assert/strict";
++import { describe, it } from "node:test";
++import { renderMarkdown } from "../src/markdown/render.ts";
++import { renderToc } from "../src/markdown/toc.ts";
++import { buildSite } from "./helpers.ts";
++
++describe("heading ids", () => {
++  it("suffixes duplicates and skips ids already taken", () => {
++    const { headings } = renderMarkdown("## A\n## A\n## A 1\n## A");
++    assert.deepEqual(
++      headings.map((h) => h.id),
++      ["a", "a-1", "a-1-1", "a-2"],
++    );
++  });
++});
++
++describe("renderToc", () => {
++  it("lists h2 and h3, nesting h3 under h2, escaping text", () => {
++    const { headings } = renderMarkdown("# T\n## One\n### Sub <x>\n#### Deep\n## Two");
++    assert.equal(
++      renderToc(headings),
++      '<nav class="toc"><ul><li><a href="#one">One</a><ul><li><a href="#sub-x">Sub &lt;x&gt;</a></li></ul></li><li><a href="#two">Two</a></li></ul></nav>',
++    );
++  });
++
++  it("is empty without h2/h3 headings", () => {
++    assert.equal(renderToc(renderMarkdown("# T\n#### D").headings), "");
++  });
++
++  it("is rendered by the default layout and can be turned off", async () => {
++    const on = await buildSite({ "a.md": "## One" });
++    assert.match(await on.out("a.html"), /<nav class="toc">/);
++    const off = await buildSite({ "a.md": "---\ntoc: false\n---\n## One" });
++    assert.doesNotMatch(await off.out("a.html"), /class="toc"/);
++  });
++
++  it("rejects a non-boolean toc value", async () => {
++    await assert.rejects(buildSite({ "a.md": "---\ntoc: no\n---\n" }), /"toc" must be true or false/);
++  });
++});

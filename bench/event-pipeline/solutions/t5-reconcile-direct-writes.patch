@@ -1,0 +1,124 @@
+diff --git a/docs/reconciliation.md b/docs/reconciliation.md
+index fba6270..444ebee 100644
+--- a/docs/reconciliation.md
++++ b/docs/reconciliation.md
+@@ -7,7 +7,7 @@ Webhooks get lost: vendor outages, our own downtime, a dropped queue message. Re
+ `runReconciliation(deps)` (`src/reconcile/reconcile.ts`):
+ 
+ 1. lists every vendor order id (`VendorSource.listOrderIds`),
+-2. fetches each order from the vendor (`VendorSource.getOrder`),
++2. fetches the orders from the vendor in batches of `VENDOR_BATCH_LIMIT` (`VendorSource.getOrders`); an id the vendor no longer returns is logged as `reconcile.vendor_order_vanished`,
+ 3. loads our side with `loadCanonical` (order, items, shipments),
+ 4. compares them with `diffOrder` (`src/reconcile/diff.ts`), a pure function that returns `Divergence`s,
+ 5. turns each divergence into the vendor event that would have prevented it (`buildSyntheticEvent`) and hands it to `deps.publish` — the same queue the webhooks feed.
+@@ -29,7 +29,7 @@ See AGENTS.md invariant 5. The handlers are the only writers. Going through them
+ 
+ ## Cost
+ 
+-The sweep makes one vendor round trip per order, sequentially. With ~25k open orders the nightly run takes about 40 minutes. `VendorSource.getOrders` (batch, up to `VENDOR_BATCH_LIMIT` ids per call) exists but is not used yet.
++The sweep reads the vendor in batches (`getOrders`, up to `VENDOR_BATCH_LIMIT` ids per call), so a run makes about `orders / 50` vendor round trips instead of one per order. Making it faster must never mean writing the canonical model directly: the speed-up is in reading the vendor, the healing still goes through the queue.
+ 
+ ## Metrics
+ 
+diff --git a/src/reconcile/reconcile.ts b/src/reconcile/reconcile.ts
+index 2ea2e12..84e29c5 100644
+--- a/src/reconcile/reconcile.ts
++++ b/src/reconcile/reconcile.ts
+@@ -7,7 +7,7 @@ import type { Clock } from "../lib/clock.ts";
+ import { silentLogger, type Logger } from "../lib/logger.ts";
+ import { createMetrics, type Metrics } from "../lib/metrics.ts";
+ import { diffOrder, type CanonicalSnapshot, type Divergence } from "./diff.ts";
+-import type { VendorOrder, VendorSource } from "./vendor.ts";
++import { VENDOR_BATCH_LIMIT, type VendorOrder, type VendorSource } from "./vendor.ts";
+ 
+ export interface ReconcileDeps {
+   db: Db;
+@@ -107,28 +107,48 @@ export async function runReconciliation(deps: ReconcileDeps): Promise<ReconcileR
+   const report: ReconcileReport = { checked: 0, divergent: 0, enqueued: 0, byKind: {} };
+ 
+   const ids = await deps.vendor.listOrderIds();
+-  for (const orderId of ids) {
+-    // TODO: use vendor.getOrders() once we trust the batch endpoint; one
+-    // round trip per order makes the nightly sweep take ~40 minutes.
+-    const vendorOrder = await deps.vendor.getOrder(orderId);
+-    if (!vendorOrder) {
+-      log.warn({ event: "reconcile.vendor_order_vanished", order_id: orderId, error_slug: "vendor_order_vanished" });
+-      metrics.increment("reconcile_vendor_order_vanished");
+-      continue;
++  for (const chunk of chunks(ids, VENDOR_BATCH_LIMIT)) {
++    // One round trip per chunk instead of one per order. Only the vendor reads
++    // are batched: divergences still become synthetic events on the queue.
++    const fetched = new Map((await deps.vendor.getOrders(chunk)).map((o) => [o.id, o]));
++    for (const orderId of chunk) {
++      const vendorOrder = fetched.get(orderId);
++      if (!vendorOrder) {
++        log.warn({ event: "reconcile.vendor_order_vanished", order_id: orderId, error_slug: "vendor_order_vanished" });
++        metrics.increment("reconcile_vendor_order_vanished");
++        continue;
++      }
++      reconcileOne(deps, vendorOrder, report, log, metrics);
+     }
+-    report.checked += 1;
+-    const divergences = diffOrder(vendorOrder, loadCanonical(deps.db, orderId));
+-    if (divergences.length === 0) continue;
+-    report.divergent += 1;
+-    for (const divergence of divergences) {
+-      deps.publish(buildSyntheticEvent(divergence, vendorOrder, deps.clock));
+-      report.enqueued += 1;
+-      report.byKind[divergence.kind] = (report.byKind[divergence.kind] ?? 0) + 1;
+-      metrics.increment("reconcile_divergence", { kind: divergence.kind });
+-    }
+-    log.info({ event: "reconcile.divergence_enqueued", order_id: orderId, kinds: divergences.map((d) => d.kind) });
+   }
+ 
+   log.info({ event: "reconcile.completed", ...report });
+   return report;
+ }
++
++function chunks<T>(items: readonly T[], size: number): T[][] {
++  const out: T[][] = [];
++  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
++  return out;
++}
++
++function reconcileOne(
++  deps: ReconcileDeps,
++  vendorOrder: VendorOrder,
++  report: ReconcileReport,
++  log: Logger,
++  metrics: Metrics,
++): void {
++  const orderId = vendorOrder.id;
++  report.checked += 1;
++  const divergences = diffOrder(vendorOrder, loadCanonical(deps.db, orderId));
++  if (divergences.length === 0) return;
++  report.divergent += 1;
++  for (const divergence of divergences) {
++    deps.publish(buildSyntheticEvent(divergence, vendorOrder, deps.clock));
++    report.enqueued += 1;
++    report.byKind[divergence.kind] = (report.byKind[divergence.kind] ?? 0) + 1;
++    metrics.increment("reconcile_divergence", { kind: divergence.kind });
++  }
++  log.info({ event: "reconcile.divergence_enqueued", order_id: orderId, kinds: divergences.map((d) => d.kind) });
++}
+diff --git a/test/reconcile.test.ts b/test/reconcile.test.ts
+index 8e6a437..3c1df26 100644
+--- a/test/reconcile.test.ts
++++ b/test/reconcile.test.ts
+@@ -56,6 +56,16 @@ describe("runReconciliation", () => {
+     assert.deepEqual([...sources], ["reconcile"]);
+   });
+ 
++  it("reads the vendor in batches", async () => {
++    const { pipeline, db, clock } = setup();
++    const vendor = new FakeVendor();
++    for (let n = 0; n < 120; n += 1) vendor.put(vendorOrder(`o${String(n).padStart(3, "0")}`));
++    const report = await runReconciliation({ db, vendor, clock, publish: pipeline.publish });
++    assert.equal(report.checked, 120);
++    assert.equal(report.enqueued, 120);
++    assert.equal(vendor.fetchCalls, 3);
++  });
++
+   it("is idempotent across runs", async () => {
+     // concurrency 1: two copies of the same event in one batch would both run (see AGENTS.md, dedup).
+     const { pipeline, db, clock } = setup({ concurrency: 1 });

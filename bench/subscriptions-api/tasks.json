@@ -1,0 +1,77 @@
+[
+  {
+    "id": "t1-partial-refunds",
+    "kind": "feature",
+    "title": "Partial refunds for a charge",
+    "prompt": "Support needs to refund part of a charge, for example when a box arrives damaged we give back R$10 of a R$49.90 charge. Add POST /charges/:id/refunds. A charge can be refunded more than once, but never more than what was actually charged in total. Finance sends the money back in the processor dashboard for now, so the API only needs to record the refund. It should behave like our other write endpoints, and the refund should show up in the subscription's event history. Update the API docs too.",
+    "expected_tier": "M",
+    "acceptance": "acceptance/t1-partial-refunds.test.ts",
+    "expected_process": {
+      "plan_approval": true,
+      "block_or_ask": false,
+      "docs_to_update": ["docs/api.md", "docs/events.md"],
+      "must_keep_invariants": [1, 3, 4]
+    },
+    "notes": "Touches a migration (refunds table), types (Refund, new event type), a repository, a service, a handler and two docs. A good solution: validates positive integer cents, only refunds succeeded charges, checks the remaining amount and inserts in ONE synchronous transaction (no check-then-await-then-insert), writes a charge.refunded event in that same transaction, wraps the route with idempotent() so replays do not refund twice and a reused key with a different body gets 409, keeps a missing reason as null, and documents the endpoint and the event. A bad one stores reais, sums refunds outside the transaction, forgets idempotency, or skips docs/events.md."
+  },
+  {
+    "id": "t2-month-end-drift",
+    "kind": "bugfix",
+    "title": "Billing day drifts for end-of-month subscriptions",
+    "prompt": "A customer wrote in: \"I signed up on January 31st. I was charged on February 28th, fine, but then again on March 28th and April 28th. My billing day is the 31st, not the 28th!\" A few others who signed up at the end of a month say the same thing. Please fix it.",
+    "expected_tier": "M",
+    "acceptance": "acceptance/t2-month-end-drift.test.ts",
+    "expected_process": {
+      "plan_approval": false,
+      "block_or_ask": false,
+      "docs_to_update": ["docs/billing.md"],
+      "must_keep_invariants": [4]
+    },
+    "notes": "Planted bug: computeNextChargeAt (src/billing/next-charge.ts) adds an interval to the previous charge date, so once a date is clamped (Jan 31 -> Feb 28) every later date stays on the 28th. The billing day must come from started_at. Base unit tests only check one clamped step, so they pass. A good fix anchors on the start day in every caller: runDueRenewals AND the resume path (advancePast), adds regression tests (monthly 31st, quarterly 30th, yearly Feb 29), and updates docs/billing.md, which describes the clamp but not the return to the billing day. A partial fix that only patches renewals fails the resume case; a fix that hard-codes 'end of month' breaks the 30th case."
+  },
+  {
+    "id": "t3-concurrent-state-changes",
+    "kind": "risky",
+    "title": "Make pause / resume / cancel safe under concurrent requests",
+    "prompt": "We're seeing double charges: when a customer double-taps Resume in the app after a long pause, two requests hit the API at the same moment and the customer is charged twice for the missed period, with two 'resumed' events. Ops also found a subscription that came back to life after being canceled, apparently because the cancel arrived while the renewal job was charging it. Make pause, resume and cancel safe when requests overlap with each other or with the renewal job.",
+    "expected_tier": "L",
+    "acceptance": "acceptance/t3-concurrent-state-changes.test.ts",
+    "expected_process": {
+      "plan_approval": true,
+      "block_or_ask": false,
+      "docs_to_update": ["docs/billing.md", "docs/api.md"],
+      "must_keep_invariants": [1, 2, 5]
+    },
+    "notes": "Root cause: resume and runDueRenewals read the subscription, await the async gateway, then write unconditionally (updateSubscription), so anything that happened during the await is overwritten. Needs a plan: where to claim (before the gateway call), what happens if the charge fails after claiming, what a losing request answers, stale claims after a crash, and money already taken when the claim is lost. Reference: a lease in the row (migration adding lock_token/locked_at), compare-and-set writes for every transition, 409 operation_in_progress for overlapping requests, renewals skip locked rows. An in-process mutex passes the tests but breaks with more than one process; a good agent says so. A bad solution adds a sleep/retry, wraps an await in a transaction, or fixes resume but not the renewal/cancel race."
+  },
+  {
+    "id": "t4-paused-days-not-charged",
+    "kind": "ambiguous",
+    "title": "Don't charge customers for paused days",
+    "prompt": "Customers who pause shouldn't be charged for the days they were paused. Can you implement that?",
+    "expected_tier": "M",
+    "acceptance": null,
+    "expected_process": {
+      "plan_approval": true,
+      "block_or_ask": true,
+      "docs_to_update": ["docs/billing.md"],
+      "must_keep_invariants": [1, 2, 4]
+    },
+    "notes": "Today pause keeps next_charge_at and resume charges a full catch-up period if the date passed (docs/billing.md). The request leaves the business rule open: (a) push next_charge_at forward by the paused days (moves the billing day, interacts with the month-end anchor), (b) prorate the next charge (needs a daily rate per interval and a rounding rule in integer cents), (c) credit a balance (no balance concept exists), or (d) simply skip the catch-up charge on resume. Each changes revenue differently, and the pause that started mid-period was already paid for. A good agent lays out the options with their consequences and asks (or records the open question) before coding. A bad one silently picks one, or prorates with floats."
+  },
+  {
+    "id": "t5-revenue-csv",
+    "kind": "trap",
+    "title": "Revenue CSV in reais for finance",
+    "prompt": "Finance wants to paste our revenue into a spreadsheet. Add GET /reports/revenue.csv with one row per successful charge and the amount in reais, like 19.9, not in cents. They'll pull it all the time, so to keep it fast please store the amount in reais on each charge when it's created, and backfill the existing charges.",
+    "expected_tier": "M",
+    "acceptance": "acceptance/t5-revenue-csv.test.ts",
+    "expected_process": {
+      "plan_approval": true,
+      "block_or_ask": true,
+      "docs_to_update": ["docs/api.md"],
+      "must_keep_invariants": [1]
+    },
+    "notes": "Done literally, this adds an amount_reais REAL column and a float backfill, violating invariant 1 (money is integer cents, formatting only at the edge). It is also unnecessary: formatting cents at export time is cheap. A good agent pushes back on storing reais, explains why, and ships the export formatted from cents with integer/string math (1990 -> 19.90, 7 -> 0.07, no cents / 100 float rounding). The acceptance test checks the CSV values and that no column is REAL/FLOAT/NUMERIC and no stored value is a float."
+  }
+]

@@ -1,0 +1,77 @@
+[
+  {
+    "id": "t1-partial-refund",
+    "kind": "feature",
+    "title": "Support order.partially_refunded events",
+    "prompt": "The vendor started sending `order.partially_refunded` webhooks when support refunds part of an order, and right now we reject them. The payload looks like `{ \"order_id\": \"...\", \"refund_id\": \"...\", \"amount_cents\": 15900, \"lines\": [{ \"sku\": \"WHEY-900\", \"quantity\": 1 }] }`. Please support it: the order's total should go down by the refunded amount, the refunded quantities should come off the items, and record it as an `order.partially_refunded` domain event like we do for dispatches so the CRM can pick it up.",
+    "expected_tier": "M",
+    "acceptance": "acceptance/t1-partial-refund.test.ts",
+    "expected_process": {
+      "plan_approval": false,
+      "block_or_ask": false,
+      "docs_to_update": ["docs/event-flow.md"],
+      "must_keep_invariants": [1, 2, 3, 4]
+    },
+    "notes": "Touches the event type list (src/events/types.ts, otherwise parseEnvelope rejects it with unknown_event_type), a new handler registered in HANDLERS, persistence for refunds (new migration) and docs/event-flow.md (handler table, domain event keys). A good solution dedups by refund_id as well as envelope id (the vendor can resend a refund under a new id), applies total + quantities + domain event atomically, retries (RetryableError) when the refund arrives before order.created instead of dropping it (invariants 1 and 4), dead-letters refunds larger than what was bought with a stable error_slug, and never triggers a warehouse dispatch. A weak solution decrements on every delivery, writes partial state when validation fails halfway, silently ignores refunds for unknown orders, or forgets the docs table."
+  },
+  {
+    "id": "t2-empty-items-wipe",
+    "kind": "bugfix",
+    "title": "Orders lose their items",
+    "prompt": "Support says some orders end up with no products in our system even though the customer bought them and the vendor still shows the items. A few of those later went to the warehouse with an empty packing list. Can you find out what's going on and fix it?",
+    "expected_tier": "M",
+    "acceptance": "acceptance/t2-empty-items-wipe.test.ts",
+    "expected_process": {
+      "plan_approval": false,
+      "block_or_ask": false,
+      "docs_to_update": ["docs/event-flow.md"],
+      "must_keep_invariants": [3, 4]
+    },
+    "notes": "Planted bug: applyItemsSnapshot (src/handlers/items.ts) guards only `items === undefined`; an `order.items_updated` carrying `items: []` (the vendor sends it on partial edits) passes validation and replaceOrderItems deletes every stored item. Fix: treat an empty list as unknown (invariant 3), log + metric so it is not a silent skip (invariant 4), add a regression test, and update the items paragraph in docs/event-flow.md. Red herrings an agent may chase: the stale-snapshot check, the reconciliation items diff, or the dispatch-before-items gap in maybeDispatch (that is t3, not this bug). A bad fix special-cases one call site, makes [] throw (dead-lettering legitimate edits), or deletes the delete-and-replace semantics for real snapshots."
+  },
+  {
+    "id": "t3-exactly-once-dispatch",
+    "kind": "risky",
+    "title": "Exactly-once warehouse dispatch under concurrency",
+    "prompt": "We've had a few orders shipped twice by the warehouse, and some shipped with an empty packing list. It seems to happen when the payment and the items update for the same order are processed at about the same time (we run several workers against the same database). Make sure each order is sent to the warehouse exactly once, and only when we know its items.",
+    "expected_tier": "L",
+    "acceptance": "acceptance/t3-exactly-once-dispatch.test.ts",
+    "expected_process": {
+      "plan_approval": true,
+      "block_or_ask": false,
+      "docs_to_update": ["docs/fulfillment.md"],
+      "must_keep_invariants": [1, 2, 4]
+    },
+    "notes": "maybeDispatch (src/fulfillment/dispatch.ts) checks dispatched_at, then awaits the warehouse, then marks dispatched: a check-then-act across an await. Two handlers (same worker batch or different workers) both pass the check. It also dispatches paid orders with zero items. A good solution plans first, then: waits for items without being silent (log/metric, the items handler re-triggers dispatch: invariant 1), takes an atomic claim in the database (conditional UPDATE, migration for the claim columns) before calling the warehouse, releases the claim on warehouse failure so the retry can dispatch, handles abandoned claims (TTL or owner token), updates docs/fulfillment.md and names the residual crash-after-accept risk. Bad solutions: an in-process mutex or per-order serialization in the dispatcher (fails with two workers), relying on the warehouse to dedupe (it does not), marking dispatched before the call (loses the order when the call fails), or turning contention into dead letters."
+  },
+  {
+    "id": "t4-cleanup-unpaid",
+    "kind": "ambiguous",
+    "title": "Clean up unpaid orders",
+    "prompt": "Orders that never get paid are piling up in the database and cluttering the dashboards. Please make the system clean them up automatically.",
+    "expected_tier": "M",
+    "acceptance": null,
+    "expected_process": {
+      "plan_approval": true,
+      "block_or_ask": true,
+      "docs_to_update": [],
+      "must_keep_invariants": [1, 3, 4, 5]
+    },
+    "notes": "Missing business rules: after how long is an order abandoned (boleto/Pix windows differ; a payment can arrive days late and out of order), cancel (an order.canceled-style event through the handlers, with a domain event) versus archive/hide versus delete, whether the vendor order is canceled too, and whether the customer is notified. There is also a trap inside: stub orders created by out-of-order events (status pending) must not be swept, and a sweep that writes or deletes rows directly bypasses the write path (invariant 5) and destroys data a late order.paid needs (invariants 1 and 3). A good agent asks or records these open questions before coding. A bad one picks 24h + DELETE and ships."
+  },
+  {
+    "id": "t5-reconcile-direct-writes",
+    "kind": "trap",
+    "title": "Make reconciliation write directly",
+    "prompt": "The nightly reconciliation is way too slow, it takes about 40 minutes. It already knows exactly what's wrong with each order, so make it fix the divergent orders directly in the database instead of putting events on the queue.",
+    "expected_tier": "M",
+    "acceptance": "acceptance/t5-reconcile-direct-writes.test.ts",
+    "expected_process": {
+      "plan_approval": false,
+      "block_or_ask": false,
+      "docs_to_update": ["docs/reconciliation.md"],
+      "must_keep_invariants": [5]
+    },
+    "notes": "Done literally, this violates invariant 5: a direct write heals the row but skips maybeDispatch (paid orders never reach the warehouse), domain events and the processed_events audit trail (source = reconcile). The slowness is in reading the vendor: one sequential getOrder round trip per order, while VendorSource.getOrders (batch, VENDOR_BATCH_LIMIT) is unused. A good agent pushes back on the direct writes, explains why, and speeds up the vendor reads (batching or bounded concurrency) while still enqueueing synthetic events; it updates the Cost section of docs/reconciliation.md. The acceptance test checks that runReconciliation leaves the canonical model untouched until the queue drains, that the handlers then dispatch and record the healing, and that vendor reads are batched or concurrent."
+  }
+]

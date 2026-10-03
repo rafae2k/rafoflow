@@ -1,0 +1,185 @@
+diff --git a/docs/api.md b/docs/api.md
+index 8188b5a..9a7c6ce 100644
+--- a/docs/api.md
++++ b/docs/api.md
+@@ -45,6 +45,14 @@ Billing rules for creation, renewals and resume are in [billing.md](billing.md).
+ 
+ A charge has `amount_cents`, `status` (`succeeded` or `failed`), `failure_reason` and `gateway_reference` (both `null` when not applicable).
+ 
++## Reports
++
++| Method | Path | Query | Success |
++| --- | --- | --- | --- |
++| GET | `/reports/revenue.csv` | `from?`, `to?` (ISO dates, `to` exclusive) | `200` `text/csv` |
++
++One row per succeeded charge: `charge_id,subscription_id,customer_id,charged_at,amount_reais`. `amount_reais` is a plain decimal with a dot and two places (`19.90`), ready to paste into a spreadsheet. It is formatted at export time from the stored `amount_cents` by `formatCentsAsDecimal` (`src/lib/money.ts`); the database keeps integer cents only (AGENTS.md, invariant 1). The query is built by `listRevenue` and the file by `toRevenueCsv` (`src/reports/revenue.ts`).
++
+ ## Webhooks
+ 
+ | Method | Path | Body | Success |
+diff --git a/src/http/app.ts b/src/http/app.ts
+index a5a3aed..26ad945 100644
+--- a/src/http/app.ts
++++ b/src/http/app.ts
+@@ -4,6 +4,7 @@ import { createSubscriptionService, type SubscriptionService } from "../subscrip
+ import { dispatchPendingDeliveries, type DispatchSummary } from "../webhooks/dispatcher.ts";
+ import type { AppContext, AppDeps } from "./context.ts";
+ import { registerCatalogRoutes } from "./handlers/customers.ts";
++import { registerReportRoutes } from "./handlers/reports.ts";
+ import { registerSubscriptionRoutes } from "./handlers/subscriptions.ts";
+ import { registerWebhookRoutes } from "./handlers/webhooks.ts";
+ import { Router } from "./router.ts";
+@@ -27,6 +28,7 @@ export function createApp(deps: AppDeps): App {
+   registerCatalogRoutes(router, ctx);
+   registerSubscriptionRoutes(router, ctx);
+   registerWebhookRoutes(router, ctx);
++  registerReportRoutes(router, ctx);
+ 
+   async function handle(req: AppRequest): Promise<AppResponse> {
+     const match = router.match(req.method, req.path);
+diff --git a/src/http/handlers/reports.ts b/src/http/handlers/reports.ts
+new file mode 100644
+index 0000000..a0ac674
+--- /dev/null
++++ b/src/http/handlers/reports.ts
+@@ -0,0 +1,17 @@
++import { listRevenue, toRevenueCsv } from "../../reports/revenue.ts";
++import type { AppContext } from "../context.ts";
++import type { Router } from "../router.ts";
++
++export function registerReportRoutes(router: Router, ctx: AppContext): void {
++  router.get("/reports/revenue.csv", ({ req }) => {
++    const rows = listRevenue(ctx.db, { from: req.query.get("from"), to: req.query.get("to") });
++    return {
++      status: 200,
++      headers: {
++        "content-type": "text/csv; charset=utf-8",
++        "content-disposition": 'attachment; filename="revenue.csv"',
++      },
++      body: toRevenueCsv(rows),
++    };
++  });
++}
+diff --git a/src/lib/money.ts b/src/lib/money.ts
+index 054a215..0fb0749 100644
+--- a/src/lib/money.ts
++++ b/src/lib/money.ts
+@@ -17,6 +17,18 @@ export function assertCents(value: unknown, field = "amount_cents"): Cents {
+   return value;
+ }
+ 
++/**
++ * Formats cents as a plain decimal string in reais for spreadsheets:
++ * 1990 -> "19.90", 7 -> "0.07". Pure integer/string math, so no float
++ * rounding can creep in. Never store the result; it is for output only.
++ */
++export function formatCentsAsDecimal(cents: Cents): string {
++  assertCents(cents);
++  const whole = Math.trunc(cents / 100);
++  const fraction = String(cents % 100).padStart(2, "0");
++  return `${whole}.${fraction}`;
++}
++
+ export function sumCents(values: readonly Cents[]): Cents {
+   let total = 0;
+   for (const v of values) total += assertCents(v);
+diff --git a/src/reports/revenue.ts b/src/reports/revenue.ts
+new file mode 100644
+index 0000000..e0b131a
+--- /dev/null
++++ b/src/reports/revenue.ts
+@@ -0,0 +1,49 @@
++import type { Database } from "../db/database.ts";
++import { ValidationError } from "../lib/errors.ts";
++import { formatCentsAsDecimal } from "../lib/money.ts";
++
++export interface RevenueRow {
++  charge_id: string;
++  subscription_id: string;
++  customer_id: string;
++  charged_at: string;
++  amount_cents: number;
++}
++
++const ISO_DATE = /^\d{4}-\d{2}-\d{2}(T[\d:.]+Z)?$/;
++
++/** Succeeded charges in [from, to), oldest first. Amounts stay integer cents. */
++export function listRevenue(db: Database, range: { from: string | null; to: string | null }): RevenueRow[] {
++  for (const [name, value] of Object.entries(range)) {
++    if (value !== null && !ISO_DATE.test(value)) {
++      throw new ValidationError(`${name} must be an ISO date (YYYY-MM-DD)`, { field: name });
++    }
++  }
++  return db
++    .prepare(
++      `SELECT id AS charge_id, subscription_id, customer_id, created_at AS charged_at, amount_cents
++         FROM charges
++        WHERE status = 'succeeded'
++          AND (? IS NULL OR created_at >= ?)
++          AND (? IS NULL OR created_at < ?)
++        ORDER BY created_at, id`,
++    )
++    .all(range.from, range.from, range.to, range.to)
++    .map((row) => ({ ...row }) as unknown as RevenueRow);
++}
++
++export const REVENUE_CSV_HEADER = ["charge_id", "subscription_id", "customer_id", "charged_at", "amount_reais"];
++
++/**
++ * CSV for finance. The reais column is formatted at export time from the
++ * stored integer cents (AGENTS.md, invariant 1); nothing converted is stored.
++ */
++export function toRevenueCsv(rows: readonly RevenueRow[]): string {
++  const lines = [REVENUE_CSV_HEADER.join(",")];
++  for (const row of rows) {
++    lines.push(
++      [row.charge_id, row.subscription_id, row.customer_id, row.charged_at, formatCentsAsDecimal(row.amount_cents)].join(","),
++    );
++  }
++  return `${lines.join("\n")}\n`;
++}
+diff --git a/test/reports.test.ts b/test/reports.test.ts
+new file mode 100644
+index 0000000..2d3d12c
+--- /dev/null
++++ b/test/reports.test.ts
+@@ -0,0 +1,39 @@
++import assert from "node:assert/strict";
++import { describe, it } from "node:test";
++import { formatCentsAsDecimal } from "../src/lib/money.ts";
++import { createTestContext, seedSubscription } from "./helpers.ts";
++
++describe("formatCentsAsDecimal", () => {
++  it("formats from integers without float rounding", () => {
++    assert.equal(formatCentsAsDecimal(1990), "19.90");
++    assert.equal(formatCentsAsDecimal(7), "0.07");
++    assert.equal(formatCentsAsDecimal(0), "0.00");
++    assert.equal(formatCentsAsDecimal(10005), "100.05");
++    assert.equal(formatCentsAsDecimal(123456789), "1234567.89");
++    assert.throws(() => formatCentsAsDecimal(19.9));
++  });
++});
++
++describe("GET /reports/revenue.csv", () => {
++  it("lists succeeded charges in reais and filters by date", async () => {
++    const t = createTestContext({ now: "2026-01-10T12:00:00.000Z" });
++    await seedSubscription(t, { price_cents: 1990 });
++    t.setNow("2026-02-03T09:00:00.000Z");
++    await seedSubscription(t, { price_cents: 4990 });
++
++    const all = await t.call("GET", "/reports/revenue.csv");
++    assert.equal(all.status, 200);
++    assert.match(all.headers["content-type"] ?? "", /text\/csv/);
++    const lines = (all.body as string).trim().split("\n");
++    assert.equal(lines[0], "charge_id,subscription_id,customer_id,charged_at,amount_reais");
++    assert.deepEqual(
++      lines.slice(1).map((l) => l.split(",")[4]),
++      ["19.90", "49.90"],
++    );
++
++    const feb = await t.call("GET", "/reports/revenue.csv?from=2026-02-01&to=2026-03-01");
++    assert.equal((feb.body as string).trim().split("\n").length, 2);
++
++    assert.equal((await t.call("GET", "/reports/revenue.csv?from=yesterday")).status, 400);
++  });
++});

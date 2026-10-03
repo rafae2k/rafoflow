@@ -1,0 +1,184 @@
+diff --git a/docs/billing.md b/docs/billing.md
+index d395b59..d5da258 100644
+--- a/docs/billing.md
++++ b/docs/billing.md
+@@ -12,11 +12,13 @@ The first period is charged up front at the plan price. If it fails, nothing is
+ 
+ ## Next charge date
+ 
+-`computeNextChargeAt(previousChargeAt, interval)` adds one interval: 1 month for `monthly`, 3 for `quarterly`, 12 for `yearly`. The time of day is kept. All dates are UTC ISO strings.
++`computeNextChargeAt(previousChargeAt, interval, anchorDay)` adds one interval: 1 month for `monthly`, 3 for `quarterly`, 12 for `yearly`. The time of day is kept. All dates are UTC ISO strings.
+ 
+-When the target month is shorter than the billing day, the date is clamped to the last day of that month (`addMonthsClamped`): a subscription started on January 31 is charged on February 28 (February 29 in leap years).
++Every subscription has a **billing day**: the day of month it started (`billingAnchorDay(started_at)`). Charges fall on that day. When a month is shorter than the billing day, the charge falls on the last day of that month, and the next one goes back to the billing day: a subscription started on January 31 is charged on February 28 (29 in leap years), March 31, April 30, May 31, and so on. It never drifts to the 28th.
+ 
+-`advancePast(previousChargeAt, interval, now)` repeats this until the date is strictly after `now`; it is used when a subscription comes back from a pause.
++Callers always pass the anchor day, because `previousChargeAt` may itself have been clamped. Renewals (`runDueRenewals`) and resume (`advancePast`) both do.
++
++`advancePast(previousChargeAt, interval, now, anchorDay)` repeats this until the date is strictly after `now`; it is used when a subscription comes back from a pause.
+ 
+ ## Renewals
+ 
+diff --git a/src/billing/billing-service.ts b/src/billing/billing-service.ts
+index 43007a8..264d596 100644
+--- a/src/billing/billing-service.ts
++++ b/src/billing/billing-service.ts
+@@ -8,7 +8,7 @@ import { findCustomer } from "../repositories/customers.ts";
+ import { appendEvent } from "../repositories/events.ts";
+ import { findPlan } from "../repositories/plans.ts";
+ import { insertSubscription, listDueSubscriptions, updateSubscription } from "../repositories/subscriptions.ts";
+-import { computeNextChargeAt } from "./next-charge.ts";
++import { billingAnchorDay, computeNextChargeAt } from "./next-charge.ts";
+ import type { PaymentGateway } from "./payment-gateway.ts";
+ import { recordCharge } from "./record-charge.ts";
+ 
+@@ -101,7 +101,11 @@ export function createBillingService(deps: BillingDeps): BillingService {
+             // sub.next_charge_at is non-null: listDueSubscriptions filters on it.
+             updateSubscription(db, {
+               ...sub,
+-              next_charge_at: computeNextChargeAt(sub.next_charge_at as string, plan.interval),
++              next_charge_at: computeNextChargeAt(
++                sub.next_charge_at as string,
++                plan.interval,
++                billingAnchorDay(sub.started_at),
++              ),
+               updated_at: now,
+             });
+             summary.charged++;
+diff --git a/src/billing/next-charge.ts b/src/billing/next-charge.ts
+index ed1e3c9..52892e9 100644
+--- a/src/billing/next-charge.ts
++++ b/src/billing/next-charge.ts
+@@ -40,20 +40,45 @@ export function addMonthsClamped(iso: string, months: number): string {
+   return result.toISOString();
+ }
+ 
++/** The day of month a subscription bills on: the UTC day it started. */
++export function billingAnchorDay(startedAt: string): number {
++  const date = new Date(startedAt);
++  if (Number.isNaN(date.getTime())) throw new RangeError(`invalid date: ${startedAt}`);
++  return date.getUTCDate();
++}
++
+ /**
+  * Computes the next charge date for a subscription, one billing interval
+  * after `previousChargeAt`. See docs/billing.md for the calendar rules.
++ *
++ * `anchorDay` is the subscription's billing day (see `billingAnchorDay`).
++ * The result is on that day, or on the last day of the month when the month
++ * is shorter. Without it, the day of `previousChargeAt` is used, which drifts
++ * after a clamped month (Jan 31 -> Feb 28 -> Mar 28), so pass it whenever
++ * `previousChargeAt` may have been clamped.
+  */
+-export function computeNextChargeAt(previousChargeAt: string, interval: PlanInterval): string {
+-  return addMonthsClamped(previousChargeAt, monthsForInterval(interval));
++export function computeNextChargeAt(previousChargeAt: string, interval: PlanInterval, anchorDay?: number): string {
++  const next = new Date(addMonthsClamped(previousChargeAt, monthsForInterval(interval)));
++  if (anchorDay === undefined) return next.toISOString();
++  if (!Number.isInteger(anchorDay) || anchorDay < 1 || anchorDay > 31) {
++    throw new RangeError(`invalid anchor day: ${anchorDay}`);
++  }
++  const day = Math.min(anchorDay, daysInMonth(next.getUTCFullYear(), next.getUTCMonth()));
++  next.setUTCDate(day);
++  return next.toISOString();
+ }
+ 
+ /**
+  * Advances a (possibly overdue) charge date until it is strictly after
+  * `nowIso`. Used when a subscription comes back from a pause.
+  */
+-export function advancePast(previousChargeAt: string, interval: PlanInterval, nowIso: string): string {
+-  let next = computeNextChargeAt(previousChargeAt, interval);
+-  while (next <= nowIso) next = computeNextChargeAt(next, interval);
++export function advancePast(
++  previousChargeAt: string,
++  interval: PlanInterval,
++  nowIso: string,
++  anchorDay?: number,
++): string {
++  let next = computeNextChargeAt(previousChargeAt, interval, anchorDay);
++  while (next <= nowIso) next = computeNextChargeAt(next, interval, anchorDay);
+   return next;
+ }
+diff --git a/src/subscriptions/subscription-service.ts b/src/subscriptions/subscription-service.ts
+index 513c39d..b4bfd1e 100644
+--- a/src/subscriptions/subscription-service.ts
++++ b/src/subscriptions/subscription-service.ts
+@@ -1,4 +1,4 @@
+-import { advancePast } from "../billing/next-charge.ts";
++import { advancePast, billingAnchorDay } from "../billing/next-charge.ts";
+ import type { PaymentGateway } from "../billing/payment-gateway.ts";
+ import { recordCharge } from "../billing/record-charge.ts";
+ import { withTransaction, type Database } from "../db/database.ts";
+@@ -105,7 +105,7 @@ export function createSubscriptionService(deps: SubscriptionDeps): SubscriptionS
+         ...sub,
+         status: "active",
+         paused_at: null,
+-        next_charge_at: advancePast(sub.next_charge_at as string, plan.interval, now),
++        next_charge_at: advancePast(sub.next_charge_at as string, plan.interval, now, billingAnchorDay(sub.started_at)),
+         updated_at: now,
+       };
+       const charge = withTransaction(db, () => {
+diff --git a/test/next-charge.test.ts b/test/next-charge.test.ts
+index dce69a9..5d2330d 100644
+--- a/test/next-charge.test.ts
++++ b/test/next-charge.test.ts
+@@ -1,6 +1,12 @@
+ import assert from "node:assert/strict";
+ import { describe, it } from "node:test";
+-import { addMonthsClamped, advancePast, computeNextChargeAt, daysInMonth } from "../src/billing/next-charge.ts";
++import {
++  addMonthsClamped,
++  advancePast,
++  billingAnchorDay,
++  computeNextChargeAt,
++  daysInMonth,
++} from "../src/billing/next-charge.ts";
+ 
+ describe("daysInMonth", () => {
+   it("knows leap years", () => {
+@@ -39,6 +45,32 @@ describe("computeNextChargeAt", () => {
+   it("handles a yearly plan started on Feb 29", () => {
+     assert.equal(computeNextChargeAt("2028-02-29T08:00:00.000Z", "yearly"), "2029-02-28T08:00:00.000Z");
+   });
++
++  it("returns to the billing day after a clamped month", () => {
++    const anchor = billingAnchorDay("2026-01-31T10:00:00.000Z");
++    assert.equal(anchor, 31);
++    let date = computeNextChargeAt("2026-01-31T10:00:00.000Z", "monthly", anchor);
++    const seen = [date];
++    for (let i = 0; i < 4; i++) seen.push((date = computeNextChargeAt(date, "monthly", anchor)));
++    assert.deepEqual(seen, [
++      "2026-02-28T10:00:00.000Z",
++      "2026-03-31T10:00:00.000Z",
++      "2026-04-30T10:00:00.000Z",
++      "2026-05-31T10:00:00.000Z",
++      "2026-06-30T10:00:00.000Z",
++    ]);
++  });
++
++  it("brings a Feb 29 yearly plan back to Feb 29 in the next leap year", () => {
++    const anchor = billingAnchorDay("2028-02-29T08:00:00.000Z");
++    let date = "2028-02-29T08:00:00.000Z";
++    for (let i = 0; i < 4; i++) date = computeNextChargeAt(date, "yearly", anchor);
++    assert.equal(date, "2032-02-29T08:00:00.000Z");
++  });
++
++  it("rejects an invalid anchor day", () => {
++    assert.throws(() => computeNextChargeAt("2026-01-10T00:00:00.000Z", "monthly", 0), RangeError);
++  });
+ });
+ 
+ describe("advancePast", () => {
+@@ -48,4 +80,11 @@ describe("advancePast", () => {
+       "2026-05-10T12:00:00.000Z",
+     );
+   });
++
++  it("keeps the billing day while skipping periods", () => {
++    assert.equal(
++      advancePast("2026-02-28T12:00:00.000Z", "monthly", "2026-04-05T00:00:00.000Z", 31),
++      "2026-04-30T12:00:00.000Z",
++    );
++  });
+ });

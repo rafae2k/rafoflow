@@ -1,0 +1,313 @@
+diff --git a/docs/api.md b/docs/api.md
+index 8188b5a..0a12e8b 100644
+--- a/docs/api.md
++++ b/docs/api.md
+@@ -39,12 +39,24 @@ Billing rules for creation, renewals and resume are in [billing.md](billing.md).
+ 
+ ## Charges
+ 
+-| Method | Path           | Success      |
+-| ------ | -------------- | ------------ |
+-| GET    | `/charges/:id` | `200` charge |
++| Method | Path                                               | Success                  |
++| ------ | -------------------------------------------------- | ------------------------ |
++| GET    | `/charges/:id`                                     | `200` charge             |
++| POST   | `/charges/:id/refunds` `{ amount_cents, reason? }` | `201` refund             |
++| GET    | `/charges/:id/refunds`                             | `200 { data: Refund[] }` |
+ 
+ A charge has `amount_cents`, `status` (`succeeded` or `failed`), `failure_reason` and `gateway_reference` (both `null` when not applicable).
+ 
++### Refunds
++
++`createRefund` (`src/billing/refunds.ts`) records a partial or full refund of a charge. The money is returned by finance in the processor dashboard; the API keeps the record and writes a `charge.refunded` event.
++
++- `amount_cents` must be a positive integer (`400` otherwise).
++- Only `succeeded` charges can be refunded (`409 charge_not_refundable`).
++- The sum of all refunds of a charge never exceeds its `amount_cents`: a refund above the remaining amount is rejected with `422 refund_exceeds_charge` (`details.remaining_cents`).
++- Like every write, it requires `Idempotency-Key`; a replay returns the original refund and does not refund again.
++- `reason` is optional and stays `null` when not given.
++
+ ## Webhooks
+ 
+ | Method | Path | Body | Success |
+diff --git a/docs/events.md b/docs/events.md
+index b2c4e0e..f1936b7 100644
+--- a/docs/events.md
++++ b/docs/events.md
+@@ -17,6 +17,7 @@ Every change that matters to the business is recorded in the append-only `events
+ | `subscription.past_due` | a renewal charge failed | `from`, `to`, `reason` |
+ | `charge.succeeded` | a charge was approved | `amount_cents` |
+ | `charge.failed` | a charge was declined | `amount_cents`, `reason` |
++| `charge.refunded` | part or all of a charge was refunded | `refund_id`, `amount_cents`, `refunded_total_cents` |
+ 
+ ## One event per state change
+ 
+diff --git a/src/billing/refunds.ts b/src/billing/refunds.ts
+new file mode 100644
+index 0000000..0abbf00
+--- /dev/null
++++ b/src/billing/refunds.ts
+@@ -0,0 +1,66 @@
++import { withTransaction, type Database } from "../db/database.ts";
++import type { Refund } from "../domain/types.ts";
++import type { Clock } from "../lib/clock.ts";
++import { AppError, ConflictError, NotFoundError, ValidationError } from "../lib/errors.ts";
++import type { IdGenerator } from "../lib/ids.ts";
++import { isCents } from "../lib/money.ts";
++import { findCharge } from "../repositories/charges.ts";
++import { appendEvent } from "../repositories/events.ts";
++import { insertRefund, sumRefundedCents } from "../repositories/refunds.ts";
++
++export class RefundExceedsChargeError extends AppError {
++  constructor(remainingCents: number) {
++    super(422, "refund_exceeds_charge", `only ${remainingCents} cents of this charge can still be refunded`, {
++      remaining_cents: remainingCents,
++    });
++  }
++}
++
++/**
++ * Records a (partial) refund of a succeeded charge. The money itself is
++ * returned by finance in the processor dashboard; this keeps our books.
++ * The check and the insert run in one synchronous transaction, so two
++ * refunds can never exceed the charged amount together.
++ */
++export function createRefund(
++  deps: { db: Database; clock: Clock; ids: IdGenerator },
++  chargeId: string,
++  input: { amount_cents: unknown; reason: string | null },
++): Refund {
++  const { db, clock, ids } = deps;
++  const amount = input.amount_cents;
++  if (!isCents(amount) || amount === 0) {
++    throw new ValidationError("amount_cents must be a positive integer number of cents", { field: "amount_cents" });
++  }
++  const charge = findCharge(db, chargeId);
++  if (!charge) throw new NotFoundError("charge", chargeId);
++  if (charge.status !== "succeeded") {
++    throw new ConflictError(
++      "charge_not_refundable",
++      `charge ${chargeId} is ${charge.status}; only succeeded charges can be refunded`,
++    );
++  }
++
++  return withTransaction(db, () => {
++    const alreadyRefunded = sumRefundedCents(db, charge.id);
++    const remaining = charge.amount_cents - alreadyRefunded;
++    if (amount > remaining) throw new RefundExceedsChargeError(remaining);
++    const now = clock().toISOString();
++    const refund = insertRefund(db, {
++      id: ids("re"),
++      charge_id: charge.id,
++      subscription_id: charge.subscription_id,
++      amount_cents: amount,
++      reason: input.reason,
++      created_at: now,
++    });
++    appendEvent(db, ids, {
++      type: "charge.refunded",
++      subscription_id: charge.subscription_id,
++      charge_id: charge.id,
++      payload: { refund_id: refund.id, amount_cents: amount, refunded_total_cents: alreadyRefunded + amount },
++      occurred_at: now,
++    });
++    return refund;
++  });
++}
+diff --git a/src/db/migrations.ts b/src/db/migrations.ts
+index 2161538..ae32f0b 100644
+--- a/src/db/migrations.ts
++++ b/src/db/migrations.ts
+@@ -102,6 +102,20 @@ export const MIGRATIONS: readonly Migration[] = [
+       CREATE INDEX webhook_deliveries_pending ON webhook_deliveries (status, created_at);
+     `,
+   },
++  {
++    id: "004_refunds",
++    sql: `
++      CREATE TABLE refunds (
++        id TEXT PRIMARY KEY,
++        charge_id TEXT NOT NULL REFERENCES charges(id),
++        subscription_id TEXT NOT NULL REFERENCES subscriptions(id),
++        amount_cents INTEGER NOT NULL CHECK (amount_cents > 0),
++        reason TEXT,
++        created_at TEXT NOT NULL
++      );
++      CREATE INDEX refunds_charge ON refunds (charge_id, created_at);
++    `,
++  },
+ ];
+ 
+ export function applyMigrations(db: DatabaseSync, migrations: readonly Migration[] = MIGRATIONS): string[] {
+diff --git a/src/domain/types.ts b/src/domain/types.ts
+index 2218c2d..d9c0636 100644
+--- a/src/domain/types.ts
++++ b/src/domain/types.ts
+@@ -46,6 +46,15 @@ export interface Charge {
+   created_at: string;
+ }
+ 
++export interface Refund {
++  id: string;
++  charge_id: string;
++  subscription_id: string;
++  amount_cents: Cents;
++  reason: string | null;
++  created_at: string;
++}
++
+ export type EventType =
+   | "subscription.created"
+   | "subscription.paused"
+@@ -53,7 +62,8 @@ export type EventType =
+   | "subscription.canceled"
+   | "subscription.past_due"
+   | "charge.succeeded"
+-  | "charge.failed";
++  | "charge.failed"
++  | "charge.refunded";
+ 
+ export interface DomainEvent {
+   id: string;
+diff --git a/src/http/handlers/subscriptions.ts b/src/http/handlers/subscriptions.ts
+index 17f0d28..35b6d0f 100644
+--- a/src/http/handlers/subscriptions.ts
++++ b/src/http/handlers/subscriptions.ts
+@@ -1,10 +1,12 @@
++import { createRefund } from "../../billing/refunds.ts";
+ import { NotFoundError } from "../../lib/errors.ts";
+ import { findCharge, listChargesForSubscription } from "../../repositories/charges.ts";
+ import { listEventsForSubscription } from "../../repositories/events.ts";
++import { listRefundsForCharge } from "../../repositories/refunds.ts";
+ import { idempotent, type AppContext } from "../context.ts";
+ import type { Router } from "../router.ts";
+ import { json } from "../types.ts";
+-import { parseJsonObject, requireString } from "../validation.ts";
++import { optionalString, parseJsonObject, requireString } from "../validation.ts";
+ 
+ export function registerSubscriptionRoutes(router: Router, ctx: AppContext): void {
+   router.post(
+@@ -55,4 +57,22 @@ export function registerSubscriptionRoutes(router: Router, ctx: AppContext): voi
+     if (!charge) throw new NotFoundError("charge", id);
+     return json(200, charge);
+   });
++
++  router.post(
++    "/charges/:id/refunds",
++    idempotent(ctx, ({ req, params }) => {
++      const body = parseJsonObject(req.body);
++      const refund = createRefund(ctx, params.id as string, {
++        amount_cents: body.amount_cents,
++        reason: optionalString(body, "reason"),
++      });
++      return json(201, refund);
++    }),
++  );
++
++  router.get("/charges/:id/refunds", ({ params }) => {
++    const id = params.id as string;
++    if (!findCharge(ctx.db, id)) throw new NotFoundError("charge", id);
++    return json(200, { data: listRefundsForCharge(ctx.db, id) });
++  });
+ }
+diff --git a/src/repositories/refunds.ts b/src/repositories/refunds.ts
+new file mode 100644
+index 0000000..2fd1c1b
+--- /dev/null
++++ b/src/repositories/refunds.ts
+@@ -0,0 +1,26 @@
++import type { Database } from "../db/database.ts";
++import type { Refund } from "../domain/types.ts";
++import { assertCents } from "../lib/money.ts";
++
++export function insertRefund(db: Database, refund: Refund): Refund {
++  assertCents(refund.amount_cents);
++  db.prepare(
++    "INSERT INTO refunds (id, charge_id, subscription_id, amount_cents, reason, created_at) VALUES (?, ?, ?, ?, ?, ?)",
++  ).run(refund.id, refund.charge_id, refund.subscription_id, refund.amount_cents, refund.reason, refund.created_at);
++  return refund;
++}
++
++/** Total already refunded for a charge, in integer cents. */
++export function sumRefundedCents(db: Database, chargeId: string): number {
++  const row = db
++    .prepare("SELECT COALESCE(SUM(amount_cents), 0) AS total FROM refunds WHERE charge_id = ?")
++    .get(chargeId) as { total: number };
++  return row.total;
++}
++
++export function listRefundsForCharge(db: Database, chargeId: string): Refund[] {
++  return db
++    .prepare("SELECT * FROM refunds WHERE charge_id = ? ORDER BY created_at, id")
++    .all(chargeId)
++    .map((row) => ({ ...row }) as unknown as Refund);
++}
+diff --git a/test/refunds.test.ts b/test/refunds.test.ts
+new file mode 100644
+index 0000000..fc9207f
+--- /dev/null
++++ b/test/refunds.test.ts
+@@ -0,0 +1,63 @@
++import assert from "node:assert/strict";
++import { describe, it } from "node:test";
++import { createTestContext, seedSubscription, type TestContext } from "./helpers.ts";
++
++async function firstCharge(t: TestContext, subscriptionId: string): Promise<string> {
++  const charges = await t.call("GET", `/subscriptions/${subscriptionId}/charges`);
++  return charges.body.data[0].id;
++}
++
++describe("refunds", () => {
++  it("records partial refunds up to the charged amount", async () => {
++    const t = createTestContext();
++    const { subscriptionId } = await seedSubscription(t, { price_cents: 4990 });
++    const chargeId = await firstCharge(t, subscriptionId);
++
++    const r1 = await t.call("POST", `/charges/${chargeId}/refunds`, { amount_cents: 2000, reason: "damaged box" });
++    assert.equal(r1.status, 201);
++    assert.equal(r1.body.reason, "damaged box");
++
++    const over = await t.call("POST", `/charges/${chargeId}/refunds`, { amount_cents: 2991 });
++    assert.equal(over.status, 422);
++    assert.equal(over.body.error.details.remaining_cents, 2990);
++
++    const r2 = await t.call("POST", `/charges/${chargeId}/refunds`, { amount_cents: 2990 });
++    assert.equal(r2.status, 201);
++    assert.equal(r2.body.reason, null);
++
++    const list = await t.call("GET", `/charges/${chargeId}/refunds`);
++    assert.deepEqual(
++      list.body.data.map((r: { amount_cents: number }) => r.amount_cents),
++      [2000, 2990],
++    );
++
++    const events = await t.call("GET", `/subscriptions/${subscriptionId}/events`);
++    const refunded = events.body.data.filter((e: { type: string }) => e.type === "charge.refunded");
++    assert.deepEqual(
++      refunded.map((e: { payload: { refunded_total_cents: number } }) => e.payload.refunded_total_cents),
++      [2000, 4990],
++    );
++  });
++
++  it("validates the amount and the charge", async () => {
++    const t = createTestContext();
++    const { subscriptionId } = await seedSubscription(t);
++    const chargeId = await firstCharge(t, subscriptionId);
++    assert.equal((await t.call("POST", `/charges/${chargeId}/refunds`, { amount_cents: 1.5 })).status, 400);
++    assert.equal((await t.call("POST", `/charges/${chargeId}/refunds`, { amount_cents: 0 })).status, 400);
++    assert.equal((await t.call("POST", "/charges/ch_missing/refunds", { amount_cents: 1 })).status, 404);
++  });
++
++  it("refuses to refund a failed charge", async () => {
++    const t = createTestContext({ now: "2026-01-10T12:00:00.000Z" });
++    const { subscriptionId } = await seedSubscription(t);
++    t.setNow("2026-02-10T12:00:00.000Z");
++    t.gateway.failNext("card_declined");
++    await t.app.billing.runDueRenewals();
++    const charges = await t.call("GET", `/subscriptions/${subscriptionId}/charges`);
++    const failed = charges.body.data.find((c: { status: string }) => c.status === "failed");
++    const res = await t.call("POST", `/charges/${failed.id}/refunds`, { amount_cents: 100 });
++    assert.equal(res.status, 409);
++    assert.equal(res.body.error.code, "charge_not_refundable");
++  });
++});
