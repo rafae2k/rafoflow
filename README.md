@@ -61,6 +61,8 @@ Prefer to drive by hand? Skip `/cycle` and call the skills directly.
 | Skill | What it does |
 | --- | --- |
 | `/cycle` | run the whole loop, orchestrated, with artifacts + 2 checkpoints |
+| `/task` | small, already-understood change: short plan, code + test, gate, ship |
+| `/explore` | research-only spike or feasibility check; ends in an explicit exit |
 | `/shape` | turn an idea into a pitch with a fixed appetite |
 | `/bet` | evaluate a pitch: build, kill, or reshape |
 | `/scope` | break a pitch into 3–5 independent, valuable slices |

@@ -35,7 +35,8 @@ The only forbidden moves: skipping a phase _forward_, or continuing against a sp
 
 ## Phase 0 — Setup
 
-1. Number the cycle: `ls docs/cycles/` and increment.
+0. Is this a cycle? A small, already-understood change belongs in `/task`; an unanswered "will it work?" belongs in `/explore`. Use `/cycle` for a problem whose direction is still open.
+1. Number the cycle: `ls docs/cycles/` and increment — only when work actually starts (the number is a claim). An idea with no code lives in the backlog. One code-editing stream per checkout; parallel streams use worktrees.
 2. Create `docs/cycles/NN-slug/` with a `README.md` — status, problem, tasks checklist, and "done means …".
 3. Start the living plan (a todo list of the phases). Keep it current — it's how the human follows along without babysitting.
 

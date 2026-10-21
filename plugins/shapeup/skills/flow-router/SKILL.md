@@ -28,6 +28,8 @@ A 37signals-inspired team of autonomous agents and inline skills for building pr
 | Skill | What it does | Invoke |
 | --- | --- | --- |
 | `/cycle` | Run the whole loop, orchestrated — artifacts + 2 checkpoints | `/cycle "add offline sync"` |
+| `/task` | Small, already-understood change — short process | `/task "sort the list by date"` |
+| `/explore` | Research-only: spike, feasibility, "will it work?" | `/explore "can we sync offline?"` |
 | `/shape` | Shape an idea into a pitch | `/shape offline workout tracking` |
 | `/bet` | Evaluate a pitch: build, kill, reshape | `/bet` (after a pitch) |
 | `/scope` | Break a pitch into buildable scopes | `/scope` (after betting) |
@@ -82,6 +84,12 @@ A 37signals-inspired team of autonomous agents and inline skills for building pr
 
 "Just run the whole thing for me"
   → /cycle (orchestrates research → ship, pausing only at the bet and the ship)
+
+"Small change, I already know what to do"
+  → /task (short plan, code + test, gate, ship). Two defensible options, an invariant, a backfill, or scope growth → promote to /cycle.
+
+"Will it work? Is it worth it?"
+  → /explore (research only; ends in cycle, task, backlog, or dies with evidence)
 ```
 
 ---
@@ -108,6 +116,13 @@ A 37signals-inspired team of autonomous agents and inline skills for building pr
 1. @debugger      → find root cause
 2. @engineer      → implement fix
 3. @reviewer      → verify
+```
+
+### Small change
+
+```
+1. /task          → plan in 4 lines, code + test, gate, ship
+   (promotes to /cycle the moment direction opens up)
 ```
 
 ### Research before deciding
