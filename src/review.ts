@@ -31,6 +31,18 @@ export function mergeFindings(lists: Finding[][]): Finding[] {
   return [...byId.values()];
 }
 
+/** A blocker raised by the orchestrator, not by a reviewer: the change edits files that define the repo's own checks. */
+export function protectedFinding(files: string[]): Finding {
+  return {
+    id: "protected-path-touched",
+    severity: "blocker",
+    file: files[0]!,
+    line: 1,
+    problem: `The change edits protected paths (${files.join(", ")}). These files define how the repository checks its own work; relaxing a rule or a threshold to make the gate pass hides the problem.`,
+    suggested_fix: "Revert the edit and fix the cause. If the change is truly needed, stop and ask a human to record `rafoflow approve protected`.",
+  };
+}
+
 export interface ReviewDeps {
   config: Config;
   tier: Tier;
@@ -38,6 +50,8 @@ export interface ReviewDeps {
   work: Work;
   runner: AgentRunner;
   gate: () => GateResult;
+  /** Changed files under `guard.protected_paths` that no human approved. Independent of the model. */
+  protectedTouched?: () => string[];
   confirm: (blocking: Finding[]) => Promise<boolean>;
   print: (line: string) => void;
 }
@@ -77,6 +91,8 @@ export async function reviewLoop(d: ReviewDeps): Promise<ReviewResult> {
       return findings;
     });
     const findings = mergeFindings(lists);
+    const touched = d.protectedTouched?.() ?? [];
+    if (touched.length > 0) findings.push(protectedFinding(touched));
     const blocking = findings.filter(blocks);
     remaining = blocking;
     d.work.log({ round, step: "review_merged", findings: findings.length, blocking: blocking.length, ids: blocking.map((f) => `${f.severity}:${f.id}`) });

@@ -7,6 +7,8 @@ import { DEFAULT_CONFIG, enforceGuardrails, type Config } from "./config.js";
 import type { GateResult } from "./gate.js";
 import { evaluate, hookOutput, isDryRun, isShipCommand, protectedPaths, realTarget, type GuardDeps } from "./guard.js";
 import { guardHookState, installGuardHook } from "./init.js";
+import { reviewLoop } from "./review.js";
+import type { AgentRunner } from "./adapters.js";
 import { Work } from "./work.js";
 
 const git = (cwd: string, ...args: string[]) =>
@@ -164,5 +166,20 @@ describe("hook installation", () => {
     expect(s.permissions.allow).toEqual(["Bash(ls)"]);
     expect(s.hooks.PreToolUse).toHaveLength(2);
     expect(guardHookState(root)).toBe("installed");
+  });
+});
+
+describe("review blocks a touched protected path regardless of the model", () => {
+  const runner: AgentRunner = (req) => ({ harness: "codex", text: "", ms: 1, raw: "", ...(req.label.startsWith("reviewer") ? { json: { findings: [] } } : {}) });
+  const base = () => ({ config: cfg(), tier: "M" as const, cwd: ".", work: new Work(mkdtempSync(join(tmpdir(), "rafoflow-rv-")), "w"), runner, gate: () => green, confirm: async () => true, print: () => {} });
+
+  it("raises a blocker the reviewers did not find, and escalates when nothing reverts it", async () => {
+    const r = await reviewLoop({ ...base(), protectedTouched: () => ["eslint.config.js"] });
+    expect(r.outcome).toBe("no_progress_escalate");
+    expect(r.remaining.map((f) => f.id)).toEqual(["protected-path-touched"]);
+  });
+
+  it("converges when no protected path is touched", async () => {
+    expect((await reviewLoop({ ...base(), protectedTouched: () => [] })).outcome).toBe("converged");
   });
 });

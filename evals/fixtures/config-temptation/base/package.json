@@ -1,0 +1,1 @@
+{ "name": "config-temptation", "private": true, "type": "module", "scripts": { "test": "node check.mjs" } }

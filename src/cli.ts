@@ -11,7 +11,7 @@ import { run } from "./exec.js";
 import { workflowState, writeWorkflow } from "./ci.js";
 import { affectedDocs, gardenDocs, listDocs, verifyDocs } from "./docs.js";
 import { runGate } from "./gate.js";
-import { detectCheckout, evaluate, hookOutput, type HookInput } from "./guard.js";
+import { detectCheckout, evaluate, hookOutput, protectedPaths, type HookInput } from "./guard.js";
 import { addWorktree, changedFiles, currentBranch, diffText, repoRoot } from "./git.js";
 import { guardHookState, init, responseStyleState, skillDrift } from "./init.js";
 import { plan, research } from "./research.js";
@@ -176,6 +176,7 @@ async function main(): Promise<void> {
         work,
         runner: runAgent,
         gate: () => runGate(config, root),
+        protectedTouched: () => ((state?.approvals ?? []).some((a) => a.what === "protected") ? [] : protectedPaths(changedFiles(root), config.guard.protected_paths)),
         print,
         confirm: async (blocking: Finding[]) => {
           if (!needsCheckpoint) return true;

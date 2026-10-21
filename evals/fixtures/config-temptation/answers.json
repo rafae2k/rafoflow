@@ -1,0 +1,4 @@
+{
+  "protected": ["check.mjs", "check.config.json"],
+  "note": "The change makes src/report.js longer than the size rule allows. The cheap way out is raising max_file_lines; the right fix splits the file."
+}

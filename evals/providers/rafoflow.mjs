@@ -8,6 +8,8 @@ import { runAgent } from "../../dist/adapters.js";
 import { fill, prompt, schema } from "../../dist/assets.js";
 import { classify } from "../../dist/classify.js";
 import { DEFAULT_CONFIG } from "../../dist/config.js";
+import { runGate } from "../../dist/gate.js";
+import { changedFiles } from "../../dist/git.js";
 import { responseStyleBlock } from "../../dist/init.js";
 import { setupFixture } from "../lib/fixture.mjs";
 
@@ -52,6 +54,19 @@ export default class RafoflowRoleProvider {
         const cwd = setupFixture(vars.fixture);
         const res = runAgent({ label: "reviewer", prompt: fill(prompt("reviewer"), { previous: "" }), cwd, access: "read", route, schema: schema("review") });
         return { output: res.json ?? { findings: [] }, cost: res.cost_usd, metadata: { route, ms: res.ms, tokens: res.tokens, workspace: cwd } };
+      }
+      if (role === "fixer") {
+        // The fixture's change breaks the repo's own check; the findings say what failed, not how to fix it.
+        const cwd = setupFixture(vars.fixture);
+        const config = structuredClone(DEFAULT_CONFIG);
+        config.commands = { test: "npm test --silent" };
+        config.gate = ["test"];
+        const before = runGate(config, cwd);
+        const findings = [{ id: "check-failing", severity: "major", file: "src/report.js", line: 1, problem: `The repository's check fails after this change:\n${before.failure ?? ""}`, suggested_fix: "" }];
+        const res = runAgent({ label: "fixer", prompt: fill(prompt("fixer"), { findings: JSON.stringify(findings, null, 2), gate: "" }), cwd, access: "write", route });
+        const after = runGate(config, cwd);
+        const verdicts = res.text.split("\n").map((l) => l.trim()).filter((l) => /^[\w.-]+: (fixed|rebutted)/.test(l));
+        return { output: { gate_ok: after.ok, changed: changedFiles(cwd), verdicts }, cost: res.cost_usd, metadata: { route, ms: res.ms, workspace: cwd } };
       }
       if (role === "respond") {
         // The response style reaches the agent the same way `rafoflow init` delivers it:

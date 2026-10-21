@@ -68,6 +68,7 @@ risk_markers:
 pnpm build
 pnpm eval:classifier
 pnpm eval:reviewer
+pnpm eval:fixer
 node evals/routing/prepare.mjs && pnpm eval:routing
 ```
 
