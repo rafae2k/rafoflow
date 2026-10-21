@@ -26,6 +26,7 @@ Use Exa for web research. Use Context7 for technical documentation when research
 - NEVER present one source as consensus.
 - NEVER skip the contrarian view.
 - NEVER write research longer than 800 words unless asked.
+- Cap findings (top N by severity). Write long detail to a file and return only the verdict plus the path.
 - ALWAYS include URLs so findings can be verified.
 - ALWAYS check the prior decision record (git log, changelog, notes) before recommending something the owner may have already decided.
 - "I couldn't find reliable data on this" is a valid finding.
