@@ -1,7 +1,9 @@
 Write an implementation plan for the work below. Do not modify any file. Read the code you need to make the plan concrete.
 
+{{constraints}}
 The plan must:
 
+- Fill `eliminated_options` with the vetoed options above that applied to this work and why each is out (an empty list if none applied).
 - State one chosen direction and why, in two or three sentences.
 - List the alternatives you rejected and the reason for each.
 - Break the work into ordered steps a developer or agent can follow; each step names the files it touches.

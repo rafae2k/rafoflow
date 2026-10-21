@@ -97,7 +97,7 @@ export const DEFAULT_CONFIG: Config = {
   guard: {
     ship_commands: ["\\bwrangler\\s+deploy\\b", "\\b(npm|pnpm|yarn)\\s+(run\\s+)?(publish|deploy)\\b"],
     ship_requires_clean: [],
-    protected_paths: [".rafoflow/config.yaml", ".claude/settings.json", ".claude/settings.local.json", "**/eslint.config.*", "**/.eslintrc*", "**/vitest.config.*", "**/jest.config.*"],
+    protected_paths: [".rafoflow/config.yaml", ".rafoflow/constraints.yaml", ".claude/settings.json", ".claude/settings.local.json", "**/eslint.config.*", "**/.eslintrc*", "**/vitest.config.*", "**/jest.config.*"],
   },
 };
 

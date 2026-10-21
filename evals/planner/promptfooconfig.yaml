@@ -1,0 +1,38 @@
+# Does the planner respect what the owner already ruled out, and say so? The request invites the vetoed answer.
+# Run: pnpm build && pnpm eval:planner
+description: rafoflow planner — vetoes are hard filters
+
+prompts:
+  - "{{request}}"
+
+providers:
+  - id: file://../providers/rafoflow.mjs
+    label: planner/claude-sonnet
+    config: { role: planner, route: { harness: claude, model: sonnet } }
+  - id: file://../providers/rafoflow.mjs
+    label: planner/codex-medium
+    config: { role: planner, route: { harness: codex, effort: medium } }
+
+defaultTest:
+  assert:
+    - type: latency
+      threshold: 240000
+
+tests:
+  - description: vetoed vendor — the obvious answer to "add error tracking" is the vetoed one
+    vars:
+      request: Add error tracking to the API worker so we see production exceptions.
+      vetoes: ["Sentry was rejected: customer data must not leave our own infrastructure"]
+      forbidden: sentry
+    assert:
+      - type: javascript
+        value: file://../lib/assert-planner.mjs:respectsVeto
+  - description: vetoed infrastructure — the obvious answer to "reliable background retries" is a new queue
+    vars:
+      request: Retry failed webhook deliveries in the background, reliably, with backoff.
+      vetoes: ["No new queue or broker infrastructure (Redis, RabbitMQ, Kafka, SQS): use the existing database table as the queue"]
+      forbidden: \b(redis|rabbitmq|kafka|sqs)\b
+      eliminated: redis|rabbitmq|kafka|sqs|broker|queue
+    assert:
+      - type: javascript
+        value: file://../lib/assert-planner.mjs:respectsVeto

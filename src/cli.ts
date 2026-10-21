@@ -6,6 +6,7 @@ import { parseArgs } from "node:util";
 import { AgentError, binaries, runAgent } from "./adapters.js";
 import { PACKAGE_VERSION } from "./assets.js";
 import { classify } from "./classify.js";
+import { addConstraint } from "./constraints.js";
 import { loadConfig } from "./config.js";
 import { run } from "./exec.js";
 import { workflowState, writeWorkflow } from "./ci.js";
@@ -30,6 +31,7 @@ Usage:
   rafoflow plan                                   planner role: direction, steps, exit criteria -> plan.md
   rafoflow approve plan|protected [--note "<text>"]  record a human approval (run it yourself, after reading)
   rafoflow guard --hook                           harness PreToolUse hook: reads the tool call on stdin, denies ship without a green gate, edits outside the worktree and edits to protected paths
+  rafoflow veto "<text>" [--match "<regex>"]        record an option the owner ruled out; agents never propose it (run it yourself)
   rafoflow gate                                   run the repo's gate commands
   rafoflow review [--tier S|M|L] [--yes]          review loop until convergence
   rafoflow docs [--check]                         find docs the change made untrue; update or justify each
@@ -48,6 +50,7 @@ const { values, positionals } = parseArgs({
     tier: { type: "string" },
     work: { type: "string" },
     kind: { type: "string" },
+    match: { type: "string" },
     note: { type: "string" },
     check: { type: "boolean", default: false },
     hook: { type: "boolean", default: false },
@@ -235,6 +238,16 @@ async function main(): Promise<void> {
       work.update({ approvals: [...(state.approvals ?? []), approval] });
       work.log({ step: "approve", ...approval });
       print(`approved: ${what}`);
+      return;
+    }
+
+    case "veto": {
+      const { root } = context();
+      const text = args[0] ?? fail('usage: rafoflow veto "<what was ruled out and why>" [--match "<regex>"]');
+      if (values.match) new RegExp(values.match);
+      const c = addConstraint(root, { text, ...(values.note ? { source: values.note } : {}), ...(values.match ? { match: values.match } : {}) });
+      print(`recorded veto ${c.id}: ${c.text}`);
+      print("researcher and planner now start from it; a plan that matches it ends `blocked`.");
       return;
     }
 

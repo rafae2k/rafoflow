@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { runAgent } from "../../dist/adapters.js";
 import { fill, prompt, schema } from "../../dist/assets.js";
 import { classify } from "../../dist/classify.js";
+import { constraintsBlock } from "../../dist/constraints.js";
 import { DEFAULT_CONFIG } from "../../dist/config.js";
 import { runGate } from "../../dist/gate.js";
 import { changedFiles } from "../../dist/git.js";
@@ -54,6 +55,19 @@ export default class RafoflowRoleProvider {
         const cwd = setupFixture(vars.fixture);
         const res = runAgent({ label: "reviewer", prompt: fill(prompt("reviewer"), { previous: "" }), cwd, access: "read", route, schema: schema("review") });
         return { output: res.json ?? { findings: [] }, cost: res.cost_usd, metadata: { route, ms: res.ms, tokens: res.tokens, workspace: cwd } };
+      }
+      if (role === "planner") {
+        // `vetoes` (list of strings) go in as the owner's constraints; `research` is optional prior research text.
+        const vetoes = (vars.vetoes ?? []).map((text) => ({ text, date: "2026-10-01" }));
+        const res = runAgent({
+          label: "planner",
+          prompt: fill(prompt("planner"), { request: input, tier: vars.tier ?? "M", research: vars.research ?? "(none)", constraints: constraintsBlock(vetoes) }),
+          cwd: mkdtempSync(join(tmpdir(), "rafoflow-planner-")),
+          access: "read",
+          route,
+          schema: schema("plan"),
+        });
+        return { output: res.json ?? {}, cost: res.cost_usd, metadata: { route, ms: res.ms } };
       }
       if (role === "fixer") {
         // The fixture's change breaks the repo's own check; the findings say what failed, not how to fix it.

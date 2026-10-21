@@ -38,6 +38,7 @@ npx rafoflow doctor
 | `rafoflow gate` | The repo's declared gate commands, in order |
 | `rafoflow review [--yes]` | Reviewers from another vendor + fixer + gate, until zero blocking findings with a green gate; escalates on no progress or after the round ceiling; checkpoint before fixing on configured tiers |
 | `rafoflow research "<q>" ["<q>"…]` | Researcher with web access answers with sourced evidence (source levels 1–4) and lists what it could not verify → `research.md` |
+| `rafoflow veto "<text>" [--match <regex>]` | A human records an option ruled out; researcher and planner start from it as a hard filter, the planner lists eliminated options, and a plan matching the veto ends `blocked` |
 | `rafoflow plan` | Planner writes direction, rejected alternatives, steps with files, exit criteria and risks → `plan.md` |
 | `rafoflow approve plan\|protected` | A human records the approval (agents are told never to run it); `protected` unlocks edits to protected paths for this work item |
 | `rafoflow guard --hook` | Harness PreToolUse hook: ship commands need committed shipped paths and a green gate; edits stay in the worktree; protected paths need approval. `init` installs it for Claude Code; elsewhere `rafoflow ci` is the backstop |
@@ -69,6 +70,7 @@ pnpm build
 pnpm eval:classifier
 pnpm eval:reviewer
 pnpm eval:fixer
+pnpm eval:planner
 node evals/routing/prepare.mjs && pnpm eval:routing
 ```
 

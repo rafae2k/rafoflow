@@ -17,6 +17,7 @@ Rules:
 - If a human decision or access is needed, set the outcome to `blocked` and write the question.
 - Put everything you could not verify in `unverified`.
 
+{{constraints}}
 Context of the work: {{request}}
 
 Questions: {{questions}}

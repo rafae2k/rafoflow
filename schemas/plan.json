@@ -1,10 +1,19 @@
 {
   "type": "object",
   "additionalProperties": false,
-  "required": ["direction", "why", "alternatives", "steps", "exit_criteria", "risks", "outcome", "open_question"],
+  "required": ["direction", "why", "eliminated_options", "alternatives", "steps", "exit_criteria", "risks", "outcome", "open_question"],
   "properties": {
     "direction": { "type": "string" },
     "why": { "type": "string" },
+    "eliminated_options": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["option", "reason"],
+        "properties": { "option": { "type": "string" }, "reason": { "type": "string" } }
+      }
+    },
     "alternatives": {
       "type": "array",
       "items": {
