@@ -52,6 +52,8 @@ When the target is a **spec** rather than code (class A/B cycle, see `/cycle` â†
 
 **Verdict: [SHIP IT / FIX THEN SHIP / NEEDS REWORK]**
 
+**Evidence (labeled, below the verdict):** every blocker with `file:line` and what you checked.
+
 **What's good:**
 - [Specific praise â€” what works well]
 

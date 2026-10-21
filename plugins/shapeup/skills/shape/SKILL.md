@@ -54,6 +54,8 @@ What is explicitly NOT included? Be specific.
 ```
 ## PITCH: [Name]
 
+**Deliverable:** [the artifact that exists when this is done, and its format]
+
 **Problem**
 [1-3 sentences. What hurts and for whom.]
 

@@ -105,6 +105,8 @@ When the bug lives in real production state — not code you can run locally —
 
 ## Output Format
 
+Two layers: open with a **verdict** (≤5 lines, plain language: what happened, why, what it affects, what to do — no paths or jargon), then the labeled **evidence** below. Never compress literal errors, security warnings, destructive-action confirmations or ready-to-paste commands. See `/cycle` → `references/output-contract.md`.
+
 ```
 ## DEBUG: [symptom description]
 

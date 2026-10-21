@@ -51,6 +51,10 @@ Ask these questions in order. Stop at the first "no."
 **Reasoning**
 [2-4 sentences. Direct. No hedging.]
 
+**Eliminated options:** [options ruled out earlier, and why]
+
+**Evidence:** [labeled, below the verdict: the facts behind the call]
+
 **[If RESHAPE] What needs to change:**
 - [Specific issue 1]
 - [Specific issue 2]

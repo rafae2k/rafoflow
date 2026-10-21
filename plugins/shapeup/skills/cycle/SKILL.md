@@ -38,7 +38,8 @@ The only forbidden moves: skipping a phase _forward_, or continuing against a sp
 0. Is this a cycle? A small, already-understood change belongs in `/task`; an unanswered "will it work?" belongs in `/explore`. Use `/cycle` for a problem whose direction is still open.
 1. Number the cycle: `ls docs/cycles/` and increment — only when work actually starts (the number is a claim). An idea with no code lives in the backlog. One code-editing stream per checkout; parallel streams use worktrees.
 2. Create `docs/cycles/NN-slug/` with a `README.md` — status, problem, tasks checklist, and "done means …".
-3. Start the living plan (a todo list of the phases). Keep it current — it's how the human follows along without babysitting.
+3. State the deliverable in one line — `Deliverable: <artifact> in <format>` — and copy it into the README's "done means". If a skill was invoked, its product is the deliverable. Research is a means, never the end. (See [references/output-contract.md](references/output-contract.md).)
+4. Start the living plan (a todo list of the phases). Keep it current — it's how the human follows along without babysitting.
 
 ## Phase 1 — Research (`research.md`) · parallel subagents
 
@@ -71,7 +72,7 @@ Run `/shape` on the goal, grounded in the research (reference the evidence, don'
 
 ### CHECKPOINT ① — Bet on the direction
 
-Present: a 3–5 finding summary from research + the full pitch. Then **one batched question** carrying the genuine direction decisions accumulated so far:
+Present: a 3–5 finding summary from research + the full pitch. Then **one batched question, in the chat** (numbered options, your recommendation marked — not a form), carrying the genuine direction decisions accumulated so far:
 
 - Architectural choices with a real trade-off (2+ defensible options) — with your recommendation marked.
 - Appetite / scope cut if research surfaced more than the stated goal.
@@ -135,5 +136,6 @@ These follow the **durable × dated** discipline and a machine-readable frontmat
 - **Authority is explicit.** Silence is not approval; a subagent's recommendation is not authorization; a veto stated in any session is permanent. Label DECIDED (human) vs RECOMMENDED (you). See [references/authority-and-constraints.md](references/authority-and-constraints.md).
 - **Decisions accumulate, they don't interrupt.** During research/shape/spec, note each open architectural decision instead of asking on the spot. Batch them all at Checkpoint ①.
 - **Max 3 parallel subagents** — fork exhaustion on macOS beyond that.
+- **Answers have two layers:** a verdict in ≤5 lines of plain language first, labeled evidence below. Never compress literal errors, security warnings, destructive-action confirmations, or ready-to-paste commands. At most one question per turn. See [references/output-contract.md](references/output-contract.md).
 - **Large deliverables go to a file** (write + summarize in chat), never dumped into the response.
 - **Destructive production writes:** hand the user a ready-to-run script with a dry-run before and a confirming read after — don't execute blind.
