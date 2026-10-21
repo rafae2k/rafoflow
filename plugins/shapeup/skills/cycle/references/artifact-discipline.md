@@ -27,11 +27,13 @@ superseded_by: ../x.md # required when status: superseded
 ```
 
 - **`type`** — `architecture` · `vision` · `rule` · `integration` · `reference` · `runbook` · `spec` · `adr` · `incident` · `analysis` · `cycle` · `changelog` · `index`. Routes context and defines what "in the standard" means for that doc.
-- **`status`** — durable: `current` · `superseded`. ADR: `proposed` · `accepted` · `superseded`. Cycle: `in_progress` · `done` · `parked`.
+- **`status`** — durable: `current` · `superseded`. ADR: `proposed` · `accepted` · `superseded`. Cycle: `in_progress` · `done` · `parked`. **`done` is binary — it means in production.** Known residue becomes a backlog item; there is no "half done".
 - **`updated`** — last change to the **file**, including a move or reformat, not just content.
 - **`reviewed`** — the anti-stale field, and the subtle one. It moves **only** when someone **proves** the content against the source (code/runtime) and confirms it's still true. A structural commit (a move, a formatter run) bumps `updated` but must **not** bump `reviewed` — otherwise the freshness date lies. This distinction is hard-won: without it, "updated" quietly becomes the date of a migration over content nobody re-checked, and a structure-only lint can't catch it.
 - **`area`** — a controlled vocabulary of domains, so a loop loads only the context for its goal. Register a new value in your docs-lint before using it (anti-drift).
 - **`superseded_by`** — relative path to the successor. Required and must resolve when `status: superseded`.
+
+**Revise the whole doc, don't append.** When a durable doc or report gets a new finding, re-read it and rewrite the whole piece (summary, scope of the numbers, tables that reconcile). Appending a section leaves a summary that contradicts its own body.
 
 ## "In the standard" by type
 
@@ -42,7 +44,7 @@ superseded_by: ../x.md # required when status: superseded
 | `integration` | our side of the mapping; the vendor's API doc lives separately |
 | `architecture`/`vision` | prose of the current state, edited in place |
 | `runbook` | numbered steps to perform one task |
-| `incident` | post-mortem: what happened · impact · root cause · fix · prevention. Immutable |
+| `incident` | post-mortem: what happened · impact · root cause · fix · prevention (the layer that changed — see [incident-and-anomaly.md](incident-and-anomaly.md)). Immutable |
 | `analysis` | a dated finding. Immutable; `superseded_by` when replaced |
 | `cycle` | research / pitch / spec / notes / changelog per cycle |
 | `changelog` | a per-cycle fragment, collated into the root (see below) |

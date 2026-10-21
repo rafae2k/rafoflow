@@ -103,6 +103,13 @@ When the bug lives in real production state — not code you can run locally —
 - **Partition the population before concluding.** An aggregate that merges historical and live data (or two origins) tells two stories as one. Split, then reconcile with a baseline. (More in `/cycle` → `references/evidence-discipline.md`.)
 - **"Not implemented" needs double proof.** Grep the code AND query production. A field that looks missing is often already there under a different name.
 
+## Fixing Production Data
+
+- **Never create a permanent entry point (route, command, flag) to fix one named incident.** It outlives the incident, becomes a bypass, and masks the generic safety net. Preference order: (1) make the generic net good enough, (2) a one-shot script the human runs, (3) a ready-to-paste query or command.
+- **Destructive writes:** dry-run a read showing the exact rows → check value semantics (per-unit vs total — a fix was once applied at double the value on exactly this confusion) → hand over the ready command plus a confirming read → after the human runs it, verify with a read.
+- **Enforce, don't trust:** put destructive patterns in the harness deny list (`permissions.deny` in `.claude/settings.json`). A block is deterministic — do not retry it.
+- **Three fixes tried and none worked → stop.** It is probably architectural; rethink instead of trying a fourth.
+
 ## Output Format
 
 Two layers: open with a **verdict** (≤5 lines, plain language: what happened, why, what it affects, what to do — no paths or jargon), then the labeled **evidence** below. Never compress literal errors, security warnings, destructive-action confirmations or ready-to-paste commands. See `/cycle` → `references/output-contract.md`.

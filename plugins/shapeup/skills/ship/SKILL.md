@@ -20,6 +20,15 @@ Run through these. If all pass → ship. If any fail → fix ONLY that. Don't st
 - [ ] Have you tested as a real user, not as the person who built it?
 - [ ] Did each error found this cycle change a layer (a test, a gate rule, a reviewer question, a project rule) — not only get fixed?
 
+## Gate Integrity
+
+- **Never bypass the gate:** don't edit the hook or gate config, don't ship by another path, don't use `--dry-run`/skip to "pass". Blocked means fix the cause.
+- **Git state is a gate.** Uncommitted source blocks the deploy — the bundle ships from the working tree, so production must trace to a commit.
+- Order checks cheap → expensive and fail fast. An escape hatch is explicit, rare, and states why.
+- A lint or complexity warning is fixed by refactoring, never by loosening the rule.
+- **`done` is binary = in production.** Known residue becomes a backlog item, never "half done".
+- Updating a report or doc: re-read and rewrite the whole piece (summary, scope of the numbers, tables that reconcile). Never just append a section.
+
 ## Handle "One More Thing"
 
 When you think "but I should also add..."
