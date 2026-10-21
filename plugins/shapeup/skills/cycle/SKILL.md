@@ -80,6 +80,8 @@ What does **not** go in the checkpoint: decisions with an obvious answer from th
 
 Run `/scope` to break the bet into 3–5 independent, valuable slices (most uncertain first). Then write the technical `spec.md`, derived from the approved pitch: flow, each task by file path (change / new), its tests, and deploy order.
 
+Declare the **risk class** in the spec frontmatter (`risk: A|B|C`, reason in the first lines). It sets how much failure-mode analysis, verification and independent review the spec owes — see [references/risk-and-verification.md](references/risk-and-verification.md). Class A/B specs get an independent review (`@spec-reviewer`) before the build; every finding is fixed or rejected with a reason in a `Review findings` section.
+
 Rules: reference existing code by path; real strings, not placeholders; each task independently shippable where possible; **each task carries its own tests in the spec** — including an integration test if it touches a critical boundary (see `/engineer` → Testing: Unit vs Seam).
 
 In orchestrated mode the spec has **no pause of its own** — it's the technical translation of an already-approved direction. Exception: if speccing surfaces a _new_ architectural branch-point the pitch didn't cover, ask one pointed question before continuing.
@@ -100,11 +102,11 @@ If a task reveals complexity that changes the spec: update README + spec first �
 
 ### CHECKPOINT ② — Ship
 
-Present: tasks done, gate result, a diff summary, pending migrations. Ask for explicit approval to ship. Then run `/ship`, write the changelog fragment (the gate denies a release without it), refresh the durable docs whose truth changed, deploy, and commit.
+Present a **readiness review**, not just "tasks done + gate green". For class A/B, any missing item makes the recommendation **no-go**: verification matrix with evidence on every row · every test-vs-prod difference accepted with a reason · undo written before applying · post-deploy test defined · a signal for "it broke". (Details in [references/risk-and-verification.md](references/risk-and-verification.md).) Include the diff summary and pending migrations. Ask for explicit approval to ship. Then run `/ship`, write the changelog fragment (the gate denies a release without it), refresh the durable docs whose truth changed, deploy, and commit.
 
 ## Phase 5 — Review + verify
 
-1. **Verify in the real system** — prove the new behavior actually happens (query / re-trigger / logs); measure before-vs-after when it applies.
+1. **Verify in the real system** — run the post-deploy test defined in the spec (the first real operation through the new path) and prove the new behavior actually happens (query / re-trigger / logs); measure before-vs-after when it applies.
 2. Run `/review` (or `@reviewer`) against the spec: does it match, is it simple, are empty/error states handled?
 3. Update the cycle `README.md` — tasks done, learnings — and mark it `done`.
 

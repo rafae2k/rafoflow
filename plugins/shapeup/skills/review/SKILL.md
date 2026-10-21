@@ -41,6 +41,10 @@ Review in this order. Stop going deeper once you find a blocker.
 - Dead code, unused imports, commented-out blocks? → Delete them
 - Are there TODO comments that should be done now or removed?
 
+## Spec Review Mode
+
+When the target is a **spec** rather than code (class A/B cycle, see `/cycle` → `references/risk-and-verification.md`), review it blind to the author's reasoning, from one role: architecture (source or symptom? simpler way?), facts (re-check a sample, recount every "complete" list), or production (first firing, worst case, undo, signal). Every finding gets a destination in the spec — fixed or rejected with a reason; a `pending` finding blocks the ship. For an independent read, spawn `@spec-reviewer` with the role.
+
 ## Output Format
 
 ```

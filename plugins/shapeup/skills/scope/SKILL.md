@@ -26,6 +26,8 @@ A scope = when it's done, something NEW works for the user.
 Absorb: problem, appetite, solution elements, rabbit holes, no-gos.
 The pitch is direction, not destination. You decide implementation.
 
+Note the spec's **risk class** (A/B/C, if the cycle declared one). Every scope inherits it: a class A pitch has no class C slices.
+
 ### 2. Identify 3-5 Scopes
 Each scope must be:
 - **Independent**: Can be built and tested without the others

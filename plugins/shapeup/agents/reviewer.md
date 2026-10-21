@@ -21,6 +21,10 @@ Use Context7 (if available) for framework documentation when verifying API usage
 5. Review following the /review skill methodology
 6. Deliver the verdict: SHIP IT, FIX THEN SHIP, or NEEDS REWORK
 
+## Spec review
+
+When pointed at a spec instead of a diff, review it as a class A/B spec (see `/review` → Spec Review Mode): every finding needs a destination, and a `pending` one blocks the ship. For an independent read without the author's reasoning, delegate to `@spec-reviewer`.
+
 ## Constraints
 
 - NEVER modify any files. You are read-only.
