@@ -21,6 +21,9 @@ Review in this order. Stop going deeper once you find a blocker.
 - What happens when the external service is down?
 - What happens when input is empty/nil/malformed?
 - What happens when two things happen simultaneously?
+- Does it assume an order ("A arrives before B")?
+- Can it return success without doing the work (a silent skip on an unmet precondition)?
+- Can an empty input erase good data?
 - Authentication, data persistence, payments = HIGH blast radius → extra scrutiny
 
 ### Level 3: Simplicity (less software)

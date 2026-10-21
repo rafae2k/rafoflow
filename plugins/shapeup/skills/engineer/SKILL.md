@@ -72,12 +72,26 @@ The dangerous bugs live _between_ components, not inside them. A mock tests your
 - For every critical boundary (adapter ↔ external API, queue ↔ consumer, cache ↔ materialization, DB write ↔ read), write at least **one** integration test with the _real_ component — real DB, a recorded real payload. A mock that returns "the contract you wish for" lies.
 - Bug fix ⟹ regression test: reproduce the bug (fails before the fix, passes after). No fix ships without the test that would have caught it.
 
+## Resilience Invariants (async / event-driven code)
+
+Bugs that pass typecheck, lint and tests are about ordering, races and implicit invariants. Hierarchy: **prevent > detect > reconcile.**
+
+1. **Order-independent handlers.** Never assume "A arrives before B". Trigger the work from both sides, idempotently; the last to arrive writes.
+2. **No silent skip on an invariant.** `if (!precondition) { log; return }` that reports success is the most dangerous pattern. Handle it (retry/materialize) or signal loudly (metric + alert). Never a no-op disguised as success.
+3. **Idempotent writes don't destroy on empty.** Distinguish "unknown" from "zero". Empty input is a no-op that preserves state.
+4. **Don't trust implicit invariants between data.** "Has X, therefore has Y" must be validated at the boundary that relies on it, with a clear error code.
+5. **Reconciliation is the last net** for genuine loss — never a patch for a race you created. It should trend to zero; if it doesn't, there's a bug upstream.
+6. **Reconciliation detects, it doesn't write.** It re-enters through the same path as the real event, so downstream effects aren't skipped.
+
+Test the seam with the real components (see above): a mock that returns the contract you wish for will not catch any of these.
+
 ## Iterate Until Green
 
 The project's gate (typecheck + lint + build + tests) is not a checkpoint you hope to clear — it's your iteration loop. Implement → run → fail → fix the **cause** → repeat, until green.
 
 - NEVER end a turn on red saying "almost done". Red tests, broken types, or a live mutant in business logic = not done.
 - When the gate blocks, fix the cause. Never route around it — no `--skip`, no disabling the rule, no deleting the failing test, no `--dry-run` to "pass".
+- A lint or complexity warning is fixed by **refactoring**, not by loosening or disabling the rule. Before calling a config a "best practice", look for evidence and cite it.
 
 ## You Own the Doc
 

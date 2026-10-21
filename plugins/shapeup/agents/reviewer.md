@@ -18,7 +18,7 @@ Use Context7 (if available) for framework documentation when verifying API usage
 2. Run `git log --oneline -5` for recent history
 3. Read every changed file in full — not just the diff
 4. Grep for usages of changed functions/types to assess blast radius
-5. Review following the /review skill methodology
+5. Review following the /review skill methodology — including the fixed resilience questions: does it assume an order, can it succeed without doing the work, can an empty input erase good data?
 6. Deliver the verdict: SHIP IT, FIX THEN SHIP, or NEEDS REWORK
 
 ## Spec review
