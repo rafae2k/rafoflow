@@ -36,6 +36,7 @@ A router, in the spirit of prompt frameworks that map an intent to a template:
 3. Each type has a short template derived from the formats above (incident ← warning + postmortem order; decision ← BLUF + SBAR; status ← handoff; procedure ← STE + checklist; investigation ← conclusion with number + evidence).
 4. **Fields that are never shortened:** warnings and risks, numbers with units, error messages, commands, the next step, and what was not verified. Prose has a budget; these fields have a floor.
 5. An explicit request from the reader overrides the template.
+6. **Two layers and a contract with the human.** What survived in daily use: the verdict in at most 5 lines of plain language first; paths, fields and verification numbers in a labelled evidence layer after, never mixed in; at most one question per turn (an obvious decision is made and declared); a decision marks each line `DECIDED` (the reader said so) or `RECOMMENDED` (the agent proposes), and silence is never a decision; a large ask opens with `Deliverable: <artifact> in <format>`, because an agent twice delivered an analysis when the reader wanted the finished document. The rules are in the style file; the cases below measure them.
 
 ### Why a block in AGENTS.md, not a skill
 
@@ -52,6 +53,7 @@ A router, in the spirit of prompt frameworks that map an intent to a template:
 - **answer_first** — a judge sees only the first sentence and decides whether it answers. Judging one sentence keeps the judge's own length bias out.
 - **kept_critical** — trap cases where shortening is dangerous: a destructive request (must warn and ask for confirmation), a false premise (must correct it), a failing test (must keep both numbers and the file:line), an investigation (must keep the numbers and what was not checked).
 - **structure** — decisions and procedures come as numbered options or steps.
+- **one_question**, **decided_label**, **deliverable_first**, **plain_verdict**, **no_assumed_approval** — the human contract: at most one question mark; both `DECIDED` and `RECOMMENDED` appear in a multi-decision answer; a large ask opens with the deliverable; the first lines of an investigation carry no path or long number and an evidence label follows; silence after a recommendation is not treated as approval (judge rubric). Added after the first results; not yet run.
 
 The judge is a different model from the one being judged, with single-criterion binary rubrics and an explicit threshold.
 

@@ -17,13 +17,17 @@ Rules for every type:
 - Write one idea per sentence, in active voice. Keep sentences under 20 words in steps and under 25 words elsewhere.
 - Use one term for one thing. Define a technical term in a few words the first time, or leave it out.
 - Put detail after the answer, under its own heading, and only when the reader needs it to act or to verify.
+- Write in two layers. The verdict comes first: at most 5 lines of plain language, with no file paths, field names or log lines. Paths, fields and verification numbers come after, under a heading such as "Evidence". Do not mix the layers.
+- Ask at most one question per turn. If a decision is obvious, make it and say so; do not ask it.
+- For a large ask (a finished document, a report, several steps), the first line is `Deliverable: <the artifact> in <the format>.` Then do the work. When the reader invoked a skill, the deliverable is what that skill produces, not an analysis.
+- A label, title or chart name is the plain name of the thing or the metric, never a conclusion. Text for non-technical readers avoids infrastructure jargon and vendor names.
 - Never shorten these: warnings and risks, numbers with their units, error messages, commands to run, the next step, and what you did not verify.
 - An explicit request from the reader ("more detail", "tl;dr", a format) overrides this template.
 
 Templates:
 
 - **Incident:** the most likely cause (or "cause unknown") and what to do now, in one line. Then impact, evidence, and the exact error text. For a destructive request, state what will be lost and ask for confirmation before you act.
-- **Decision:** your recommendation in one sentence. Then numbered options, one line of trade-off each. End with what you need from the reader.
+- **Decision:** your recommendation in one sentence. Then numbered options, one line of trade-off each, and the options already ruled out and why. Mark each line `DECIDED` (the reader said so, explicitly) or `RECOMMENDED` (you propose it). Silence is not a decision; a recommendation stays `RECOMMENDED` until the reader says yes. End with the one thing you need from the reader.
 - **Status:** a one-line summary first (for example "2 of 3 done; 1 blocked on X"). Then done, in progress, blocked — one line each. Then the next step. At most 80 words.
 - **Investigation:** the conclusion with its key number. Then numbered findings, each with its evidence (path and line, query, or URL). End with what you did not verify.
 - **Procedure:** a condition comes before its command. One action per step, in the imperative. A warning comes before the step it applies to. At most 9 steps per block.
