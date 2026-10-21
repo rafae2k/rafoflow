@@ -73,7 +73,13 @@ Use the Five Whys:
 - **Verify the fix resolves the original reproduction case.**
 - **Check for similar patterns** elsewhere — if this bug exists here, does it exist in analogous code?
 
-### 7. Document the Fix
+### 7. Close the Loop
+
+Ask the fixed question: **which layer should have caught this, and what changed in that layer?** Pick at least one — a test, a gate rule, a fixed reviewer question, a line in the project rules — and make the change now. "I fixed the case" is not an answer.
+
+If an error keeps recurring and you decide to live with it, it is not "benign" until you write the acceptance: reason + review-by date, in the accepted-anomalies register. Without that it is an open bug (see `/cycle` → `references/incident-and-anomaly.md`).
+
+### 8. Document the Fix
 
 One short note:
 
@@ -81,7 +87,7 @@ One short note:
 ## Bug: [symptom]
 **Root cause:** [what was actually wrong]
 **Fix:** [what was changed]
-**Prevents recurrence:** [test added or pattern established]
+**Prevention (layer that changed):** [test / gate rule / reviewer question / project rule]
 ```
 
 ## Investigating Production Data
@@ -124,4 +130,4 @@ When the bug lives in real production state — not code you can run locally —
 - If you've been stuck for 15+ minutes on one hypothesis, step back. List your assumptions. One of them is wrong.
 - The bug is usually simpler than you think. Check the obvious things first: typos, wrong variable, off-by-one, missing await.
 - "It works on my machine" means the reproduction conditions are incomplete, not that the bug doesn't exist.
-- After fixing, ask: "What process/pattern/test would have caught this earlier?" That's the real fix.
+- After fixing, ask: "Which layer should have caught this, and what changed in it?" That's the real fix.

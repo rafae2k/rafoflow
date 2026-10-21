@@ -1,7 +1,7 @@
 ---
 name: reviewer
 description: "Autonomous code reviewer. Reads recent changes, analyzes quality, and produces actionable review focused on simplicity and blast radius. Read-only — never modifies code. Use after building to check quality before shipping."
-tools: Read, Glob, Grep, Bash, Agent(researcher)
+tools: Read, Glob, Grep, Bash, Agent(researcher, spec-reviewer)
 model: opus
 maxTurns: 30
 skills: shape, bet, scope, cut, ship, review, engineer, debug

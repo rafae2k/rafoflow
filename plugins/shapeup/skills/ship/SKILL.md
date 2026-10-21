@@ -18,6 +18,7 @@ Run through these. If all pass → ship. If any fail → fix ONLY that. Don't st
 - [ ] Are empty states handled? (First-time user sees something helpful)
 - [ ] Is the copy in the user's language, not developer language?
 - [ ] Have you tested as a real user, not as the person who built it?
+- [ ] Did each error found this cycle change a layer (a test, a gate rule, a reviewer question, a project rule) — not only get fixed?
 
 ## Handle "One More Thing"
 

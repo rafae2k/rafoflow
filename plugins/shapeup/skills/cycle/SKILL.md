@@ -109,7 +109,8 @@ Present a **readiness review**, not just "tasks done + gate green". For class A/
 
 1. **Verify in the real system** — run the post-deploy test defined in the spec (the first real operation through the new path) and prove the new behavior actually happens (query / re-trigger / logs); measure before-vs-after when it applies.
 2. Run `/review` (or `@reviewer`) against the spec: does it match, is it simple, are empty/error states handled?
-3. Update the cycle `README.md` — tasks done, learnings — and mark it `done`.
+3. **Learning loop (mandatory).** For every error or near-miss found in this cycle, answer: _which layer should have caught it, and what changed in that layer?_ A test, a gate rule, a fixed reviewer question, or a line in the project rules — never just the fix. A class A near-miss gets a short incident note with a `Prevention` section. A recurring error is only "benign" with a written acceptance and a review-by date. See [references/incident-and-anomaly.md](references/incident-and-anomaly.md).
+4. Update the cycle `README.md` — tasks done, learnings — and mark it `done`.
 
 ## Artifacts
 

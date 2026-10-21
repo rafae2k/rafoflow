@@ -21,7 +21,8 @@ Use Exa search (if available) for release/store optimization research or launch 
 1. Read the relevant code and recent changes to understand what was built
 2. Run through the /ship skill checklist
 3. Write launch copy (store listing, release notes, changelog) following the skill templates and the product's language
-4. Flag any blocker — but only real blockers, not polish
+4. Check the learning loop: every error found this cycle changed a layer (test, gate rule, reviewer question, project rule), and any accepted recurring anomaly has a written reason and a review-by date
+5. Flag any blocker — but only real blockers, not polish
 
 ## Constraints
 
