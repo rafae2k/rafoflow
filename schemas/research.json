@@ -1,7 +1,7 @@
 {
   "type": "object",
   "additionalProperties": false,
-  "required": ["answers", "unverified", "outcome", "open_question"],
+  "required": ["answers", "prior_decisions", "decision_check", "unverified", "outcome", "open_question"],
   "properties": {
     "answers": {
       "type": "array",
@@ -29,6 +29,21 @@
         }
       }
     },
+    "prior_decisions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["decision", "date", "source", "contradicts_request"],
+        "properties": {
+          "decision": { "type": "string" },
+          "date": { "type": "string" },
+          "source": { "type": "string" },
+          "contradicts_request": { "type": "boolean" }
+        }
+      }
+    },
+    "decision_check": { "type": "string" },
     "unverified": { "type": "array", "items": { "type": "string" } },
     "outcome": { "type": "string", "enum": ["done", "needs_poc", "blocked"] },
     "open_question": { "type": "string" }

@@ -24,6 +24,7 @@
     "test": "vitest run",
     "eval:classifier": "promptfoo eval -c evals/classifier/promptfooconfig.yaml --no-cache",
     "eval:reviewer": "promptfoo eval -c evals/reviewer/promptfooconfig.yaml --no-cache",
+    "eval:researcher": "promptfoo eval -c evals/researcher/promptfooconfig.yaml --no-cache --repeat 2",
     "eval:planner": "promptfoo eval -c evals/planner/promptfooconfig.yaml --no-cache --repeat 3",
     "eval:fixer": "promptfoo eval -c evals/fixer/promptfooconfig.yaml --no-cache --repeat 3",
     "eval:routing": "promptfoo eval -c evals/routing/promptfooconfig.yaml --no-cache",

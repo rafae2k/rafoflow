@@ -27,6 +27,8 @@ export const configSchema = z.object({
     paths: z.array(z.string()),
     /** Explicit code → docs links; always checked, on top of the mention scan. */
     map: z.array(z.object({ code: z.string(), docs: z.array(z.string()) })).default([]),
+    /** Where earlier decisions live (decision records, changelog). The researcher searches them and their git history before recommending. */
+    decisions: z.array(z.string()).default([]),
   }),
   risk_markers: z.array(z.object({ path: z.string(), tier, reason: z.string() })),
   routing: z.object({
@@ -60,7 +62,7 @@ export const DEFAULT_CONFIG: Config = {
   session_harness: "claude",
   commands: {},
   gate: [],
-  docs: { paths: ["docs/", "AGENTS.md", "README.md"], map: [] },
+  docs: { paths: ["docs/", "AGENTS.md", "README.md"], map: [], decisions: [] },
   risk_markers: [],
   routing: {
     classifier: { harness: "claude", model: "haiku" },

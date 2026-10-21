@@ -75,7 +75,7 @@ describe("researcher and planner roles", () => {
   it("writes research.md with sources and records the outcome", () => {
     const work = new Work(tmp(), "w");
     const runner: AgentRunner = () =>
-      result({ json: { answers: [{ question: "Q?", answer: "A.", confidence: "high", evidence: [{ source: "Docs", level: 1, ref: "https://x" }] }], unverified: ["U"], outcome: "done", open_question: "" } });
+      result({ json: { answers: [{ question: "Q?", answer: "A.", confidence: "high", evidence: [{ source: "Docs", level: 1, ref: "https://x" }] }], prior_decisions: [], decision_check: "git log -- docs/decisions: nothing found", unverified: ["U"], outcome: "done", open_question: "" } });
     const r = research({ config: cfg(), tier: "M", cwd: ".", work, runner, request: "req", questions: ["Q?"] });
     expect(r.outcome).toBe("done");
     const md = readFileSync(join(work.dir, "research.md"), "utf8");

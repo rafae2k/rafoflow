@@ -23,6 +23,9 @@ Content farms, unsigned listicles and marketing posts are not evidence. A claim 
 - Every claim cites its source (path and line, query, or URL) and its level.
 - "X does not exist / is not implemented" needs double proof: search the code and query the data.
 - Before concluding anything about data, run the query that proves the premise and show the numbers.
+- Before recommending, look for an earlier decision on the same topic (decision records, changelog, `git log` of those paths). If the request contradicts one, say "already decided on <date>" and what was chosen; do not reopen it silently. `rafoflow research` does this check and records `prior_decisions`.
+- Reconcile any aggregate with a known baseline before presenting it, and list the real values of a status field before filtering on it.
+- Match the effort to the ask: a list or a simple question gets one query or read. Discoveries nobody asked for go in a closing note.
 - A platform limit is copied as the whole official table with its date, never only the row that looks relevant; the row you skipped is the one that fails.
 - A behavior that depends on an engine or a platform is proven on that engine, not on the local one. Say where and with which command.
 - A spike is allowed only when reading cannot settle the question; keep it outside product code and report its numbers.

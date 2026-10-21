@@ -71,6 +71,7 @@ pnpm eval:classifier
 pnpm eval:reviewer
 pnpm eval:fixer
 pnpm eval:planner
+pnpm eval:researcher
 node evals/routing/prepare.mjs && pnpm eval:routing
 ```
 

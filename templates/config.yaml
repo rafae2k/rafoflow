@@ -20,6 +20,8 @@ gate: []
 
 docs:
   paths: ["docs/", "AGENTS.md", "README.md"]
+  # Where earlier decisions live. The researcher checks them (and their git history) before recommending.
+  # decisions: ["docs/decisions/", "CHANGELOG.md"]
 
 # Paths whose change forces a minimum tier, whatever the classifier says.
 risk_markers: []

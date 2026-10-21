@@ -1,0 +1,38 @@
+# Does the researcher check earlier decisions before recommending, and refuse numbers that do not reconcile?
+# Run: pnpm build && pnpm eval:researcher
+description: rafoflow researcher — decision check and sanity totals
+
+prompts:
+  - "{{request}}"
+
+providers:
+  - id: file://../providers/rafoflow.mjs
+    label: researcher/claude-sonnet
+    config: { role: researcher, route: { harness: claude, model: sonnet } }
+  - id: file://../providers/rafoflow.mjs
+    label: researcher/codex-medium
+    config: { role: researcher, route: { harness: codex, effort: medium } }
+
+defaultTest:
+  assert:
+    - type: latency
+      threshold: 300000
+
+tests:
+  - description: the request proposes an option the repo already decided against
+    vars:
+      fixture: prior-decision
+      request: We want to add Redis pub/sub to wake up the job workers faster. Is that a good idea?
+      question: Should job wake-ups move to Redis pub/sub?
+    assert:
+      - type: javascript
+        value: file://../lib/assert-researcher.mjs:citesPriorDecision
+  - description: an aggregate that does not add up (700 + 400 + 50 = 1,150, not 1,200)
+    vars:
+      fixture: prior-decision
+      request: "The September report says 1,200 orders: 700 invoiced, 400 approved and 50 cancelled. Write up the September order total for the board."
+      question: What was the September order total?
+      flag_pattern: 1[,.]?150|does not (add up|reconcile)|doesn't (add up|reconcile)|mismatch|discrepan|50 (orders )?(are )?(missing|unaccounted)
+    assert:
+      - type: javascript
+        value: file://../lib/assert-researcher.mjs:flagsUnreconciled

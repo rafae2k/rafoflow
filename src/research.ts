@@ -2,6 +2,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { AgentRunner } from "./adapters.js";
 import { fill, prompt, schema } from "./assets.js";
+import { run } from "./exec.js";
 import type { Config } from "./config.js";
 import { constraintsBlock, loadConstraints, vetoViolations } from "./constraints.js";
 import { plannerRoute, researcherRoute } from "./routing.js";
@@ -10,6 +11,10 @@ import type { Work } from "./work.js";
 
 export interface ResearchOutput {
   answers: { question: string; answer: string; confidence: "high" | "medium" | "low"; evidence: { source: string; level: number; ref: string }[] }[];
+  /** Earlier decisions on the same topic, found in the decision paths and git history. Empty is allowed only with a `decision_check`. */
+  prior_decisions: { decision: string; date: string; source: string; contradicts_request: boolean }[];
+  /** What was searched for earlier decisions (paths, commands) and what came back, including "nothing found". */
+  decision_check: string;
   unverified: string[];
   outcome: "done" | "needs_poc" | "blocked";
   open_question: string;
@@ -47,6 +52,8 @@ export function renderResearch(r: ResearchOutput, at: string): string {
       out.push("");
     }
   });
+  out.push("## Prior decisions", "", `Checked: ${r.decision_check}`, "");
+  if (r.prior_decisions?.length) out.push(...r.prior_decisions.map((d) => `- ${d.contradicts_request ? "**ALREADY DECIDED** " : ""}${d.decision} (${d.date}; ${d.source})`), "");
   out.push("## Not verified", "", ...(r.unverified.length ? r.unverified.map((u) => `- ${u}`) : ["- Nothing reported."]), "");
   return out.join("\n");
 }
@@ -73,11 +80,18 @@ interface RoleDeps {
   runner: AgentRunner;
 }
 
+/** Earlier decisions the researcher must check before recommending: the decision paths and their recent git history. */
+export function decisionsContext(cwd: string, paths: string[]): string {
+  if (paths.length === 0) return "No decision paths are configured (`docs.decisions`). Search the changelog and the git log yourself.";
+  const log = run("git", ["log", "--oneline", "-n", "50", "--", ...paths], { cwd });
+  return `Decision paths: ${paths.join(", ")}\n\nRecent history of those paths (git log --oneline -n 50):\n${log.code === 0 && log.out.trim() ? log.out.trim() : "(no history)"}`;
+}
+
 export function research(d: RoleDeps & { request: string; questions: string[] }): ResearchOutput {
   const route = researcherRoute(d.config, d.tier);
   const res = d.runner({
     label: "researcher",
-    prompt: fill(prompt("researcher"), { request: d.request || "(not given)", questions: d.questions.map((q, i) => `${i + 1}. ${q}`).join("\n"), constraints: constraintsBlock(loadConstraints(d.cwd)) }),
+    prompt: fill(prompt("researcher"), { request: d.request || "(not given)", questions: d.questions.map((q, i) => `${i + 1}. ${q}`).join("\n"), constraints: constraintsBlock(loadConstraints(d.cwd)), decisions: decisionsContext(d.cwd, d.config.docs.decisions) }),
     cwd: d.cwd,
     access: "research",
     route,
@@ -86,6 +100,8 @@ export function research(d: RoleDeps & { request: string; questions: string[] })
   d.work.saveRaw(`research-${res.harness}.txt`, res.raw);
   const out = res.json as ResearchOutput | undefined;
   if (!out?.answers) throw new Error(`researcher returned no valid result: ${res.text.slice(0, 300)}`);
+  // "Nothing found" is an answer only when it says what was searched.
+  if (!out.decision_check?.trim()) throw new Error("researcher did not report its decision check: say what was searched for earlier decisions, even when nothing was found");
   const at = new Date().toISOString();
   writeFileSync(join(d.work.dir, "research.md"), renderResearch(out, at));
   writeFileSync(join(d.work.dir, "research.json"), JSON.stringify(out, null, 2) + "\n");

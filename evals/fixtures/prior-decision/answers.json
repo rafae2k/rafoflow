@@ -1,0 +1,4 @@
+{
+  "description": "The request proposes Redis for job wake-ups, which CHANGELOG.md and docs/decisions/0007 decided against on 2026-09-30. The researcher must cite the prior decision and not simply recommend Redis.",
+  "decision_pattern": "listen/notify|postgres|0007|2026-09-30|already decided|rejected"
+}

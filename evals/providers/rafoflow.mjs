@@ -9,6 +9,8 @@ import { fill, prompt, schema } from "../../dist/assets.js";
 import { classify } from "../../dist/classify.js";
 import { constraintsBlock } from "../../dist/constraints.js";
 import { DEFAULT_CONFIG } from "../../dist/config.js";
+import { research } from "../../dist/research.js";
+import { Work } from "../../dist/work.js";
 import { runGate } from "../../dist/gate.js";
 import { changedFiles } from "../../dist/git.js";
 import { responseStyleBlock } from "../../dist/init.js";
@@ -55,6 +57,15 @@ export default class RafoflowRoleProvider {
         const cwd = setupFixture(vars.fixture);
         const res = runAgent({ label: "reviewer", prompt: fill(prompt("reviewer"), { previous: "" }), cwd, access: "read", route, schema: schema("review") });
         return { output: res.json ?? { findings: [] }, cost: res.cost_usd, metadata: { route, ms: res.ms, tokens: res.tokens, workspace: cwd } };
+      }
+      if (role === "researcher") {
+        // `input` is the request; `vars.question` the question. Decision paths come from the fixture.
+        const cwd = setupFixture(vars.fixture);
+        const config = structuredClone(DEFAULT_CONFIG);
+        config.docs.decisions = ["CHANGELOG.md", "docs/decisions/"];
+        config.routing.researcher = { S: route, M: route, L: route };
+        const out = research({ config, tier: "M", cwd, work: new Work(cwd, "eval"), runner: runAgent, request: input, questions: [vars.question] });
+        return { output: out, metadata: { route, workspace: cwd } };
       }
       if (role === "planner") {
         // `vetoes` (list of strings) go in as the owner's constraints; `research` is optional prior research text.
