@@ -22,3 +22,8 @@ export const diffText = (cwd: string): string => git(cwd, ["diff", "HEAD"]);
 export function addWorktree(cwd: string, dir: string, branch: string): void {
   git(cwd, ["worktree", "add", "-b", branch, dir]);
 }
+
+/** Uncommitted work in this checkout, ignoring rafoflow's own records. */
+export function uncommittedCode(cwd: string): string[] {
+  return changedFiles(cwd).filter((f) => !f.startsWith(".rafoflow/"));
+}

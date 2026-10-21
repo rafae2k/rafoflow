@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import { DEFAULT_CONFIG, enforceGuardrails, type Config } from "./config.js";
 import type { GateResult } from "./gate.js";
 import { evaluate, hookOutput, isDryRun, isShipCommand, protectedPaths, realTarget, type GuardDeps } from "./guard.js";
+import { promotionReasons } from "./classify.js";
 import { guardHookState, installGuardHook } from "./init.js";
 import { reviewLoop } from "./review.js";
 import type { AgentRunner } from "./adapters.js";
@@ -181,5 +182,18 @@ describe("review blocks a touched protected path regardless of the model", () =>
 
   it("converges when no protected path is touched", async () => {
     expect((await reviewLoop({ ...base(), protectedTouched: () => [] })).outcome).toBe("converged");
+  });
+});
+
+describe("promotion of a task that outgrew its tier", () => {
+  const files = (n: number) => Array.from({ length: n }, (_, i) => `src/f${i}.ts`);
+
+  it("asks for promotion past max_files or on a risk marker, never for tier L", () => {
+    const c = cfg();
+    c.risk_markers = [{ path: "db/migrations/**", tier: "L", reason: "migration" }];
+    expect(promotionReasons(files(3), c, "S")).toEqual([]);
+    expect(promotionReasons(files(c.promotion.max_files + 1), c, "M")[0]).toMatch(/touches 13 files/);
+    expect(promotionReasons(["db/migrations/001.sql"], c, "S")[0]).toMatch(/risk markers/);
+    expect(promotionReasons(files(40), c, "L")).toEqual([]);
   });
 });

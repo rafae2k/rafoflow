@@ -46,6 +46,8 @@ export const configSchema = z.object({
   }),
   checkpoints: perTier(z.object({ before_fix: z.boolean() })),
   worktree: z.object({ dir: z.string(), branch: z.string() }),
+  /** A task that outgrows its tier is promoted to a feature, not improvised. */
+  promotion: z.object({ max_files: z.number().int().min(1) }),
   guard: z.object({
     /** Regexes matched against shell commands the agent runs; a match is a ship command (deploy, publish, migration apply). */
     ship_commands: z.array(z.string()),
@@ -96,6 +98,7 @@ export const DEFAULT_CONFIG: Config = {
   checkpoints: { S: { before_fix: false }, M: { before_fix: false }, L: { before_fix: true } },
   worktree: { dir: "../{repo}-worktrees/{slug}", branch: "work/{slug}" },
   ci: { provider: "github", node_version: "22" },
+  promotion: { max_files: 12 },
   guard: {
     ship_commands: ["\\bwrangler\\s+deploy\\b", "\\b(npm|pnpm|yarn)\\s+(run\\s+)?(publish|deploy)\\b"],
     ship_requires_clean: [],

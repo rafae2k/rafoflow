@@ -61,3 +61,16 @@ export function classify(input: ClassifyInput): ClassifyResult {
     agent: { harness: res.harness, model: res.model, ms: res.ms, cost_usd: res.cost_usd },
   };
 }
+
+/**
+ * Why the final diff no longer fits a task, or nothing if it still does. Re-checks what the request-time
+ * classification could not know: the files actually touched. Only a recorded tier below L can be promoted.
+ */
+export function promotionReasons(files: string[], config: Config, tier: Tier): string[] {
+  if (tier === "L") return [];
+  const reasons: string[] = [];
+  const floor = riskFloor(files, config.risk_markers);
+  if (floor?.tier === "L") reasons.push(`the diff touches risk markers: ${floor.markers.join(", ")}`);
+  if (files.length > config.promotion.max_files) reasons.push(`the diff touches ${files.length} files (a task stays under ${config.promotion.max_files})`);
+  return reasons;
+}

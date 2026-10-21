@@ -42,6 +42,6 @@ export interface Classification {
 }
 
 /** Typed outcome every phase ends with. */
-export type Outcome = "done" | "blocked" | "needs_research" | "needs_poc";
+export type Outcome = "done" | "blocked" | "needs_research" | "needs_poc" | "needs_promotion";
 
 export type ReviewOutcome = "converged" | "no_progress_escalate" | "max_rounds_escalate" | "stopped_by_human";

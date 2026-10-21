@@ -34,3 +34,7 @@ tests:
   - vars: { tier: L, request: "Decide whether payment webhooks should be processed synchronously or through a queue, and implement it" }
   - vars: { tier: L, request: "Add login with Google alongside the existing password login" }
   - vars: { tier: L, request: "Make inventory reservation safe when two checkouts try to reserve the last unit at the same time" }
+  # Near-misses: a small-sounding request that hides a schema change or two defensible approaches.
+  - vars: { tier: L, request: "Rename the 'plan' column of the subscriptions table to 'tier' and update the code that reads it" }
+  - vars: { tier: L, request: "Show a 'last seen' time on the users list. We could update it on every request or from a nightly batch job; pick one and build it" }
+  - vars: { tier: S, request: "Change the text of the discount banner from 10% off to 15% off" }

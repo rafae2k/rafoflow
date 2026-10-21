@@ -5,7 +5,7 @@ import { createInterface } from "node:readline/promises";
 import { parseArgs } from "node:util";
 import { AgentError, binaries, runAgent } from "./adapters.js";
 import { PACKAGE_VERSION } from "./assets.js";
-import { classify } from "./classify.js";
+import { classify, promotionReasons } from "./classify.js";
 import { addConstraint } from "./constraints.js";
 import { loadConfig } from "./config.js";
 import { run } from "./exec.js";
@@ -13,7 +13,7 @@ import { workflowState, writeWorkflow } from "./ci.js";
 import { affectedDocs, gardenDocs, listDocs, verifyDocs } from "./docs.js";
 import { runGate } from "./gate.js";
 import { detectCheckout, evaluate, hookOutput, protectedPaths, type HookInput } from "./guard.js";
-import { addWorktree, changedFiles, currentBranch, diffText, repoRoot } from "./git.js";
+import { addWorktree, changedFiles, currentBranch, diffText, repoRoot, uncommittedCode } from "./git.js";
 import { guardHookState, init, responseStyleState, skillDrift } from "./init.js";
 import { lintPlan } from "./plan-lint.js";
 import { plan, research, type PlanOutput } from "./research.js";
@@ -26,7 +26,7 @@ const HELP = `rafoflow ${PACKAGE_VERSION} — development process for coding age
 
 Usage:
   rafoflow init [--harness claude|codex]          install config and skills into this repo
-  rafoflow start <slug> --request "<text>"        create worktree + branch + work record
+  rafoflow start <slug> --request "<text>" [--allow-parallel]  create worktree + branch + work record (refuses on a dirty checkout)
   rafoflow classify ["<request>"] [--tier S|M|L]  classify the current work (LLM, risk floors, human override)
   rafoflow research "<question>" ["<question>"...]  researcher role: answers with sourced evidence -> research.md
   rafoflow plan                                   planner role: direction, steps, exit criteria -> plan.md
@@ -55,6 +55,7 @@ const { values, positionals } = parseArgs({
     note: { type: "string" },
     check: { type: "boolean", default: false },
     hook: { type: "boolean", default: false },
+    "allow-parallel": { type: "boolean", default: false },
     yes: { type: "boolean", default: false },
     json: { type: "boolean", default: false },
     help: { type: "boolean", short: "h", default: false },
@@ -126,6 +127,9 @@ async function main(): Promise<void> {
     case "start": {
       const slug = slugify(args[0] ?? fail("usage: rafoflow start <slug> --request \"<text>\""));
       const root = repoRoot(process.cwd());
+      const dirty = uncommittedCode(root);
+      if (dirty.length > 0 && !values["allow-parallel"])
+        fail(`WIP limit is one code work item per checkout: ${root} has uncommitted changes (${dirty.slice(0, 5).join(", ")}${dirty.length > 5 ? ", ..." : ""}). Commit or stash them, or pass --allow-parallel. Parallel work belongs in its own worktree.`);
       const { config } = loadConfig(root);
       const dir = resolve(root, config.worktree.dir.replaceAll("{repo}", basename(root)).replaceAll("{slug}", slug));
       const branch = config.worktree.branch.replaceAll("{slug}", slug);
@@ -160,6 +164,24 @@ async function main(): Promise<void> {
     case "gate": {
       const { root, config, work } = context();
       if (config.gate.length === 0) fail("no gate configured: set `gate:` and `commands:` in .rafoflow/config.yaml");
+      // Re-check the tier against the final diff: a task that grew past its tier is promoted, not improvised.
+      if (work.exists()) {
+        const state = work.read();
+        const tier = (state.approvals ?? []).some((a) => a.what === "plan") ? undefined : state.classification?.tier; // an approved plan means the feature flow
+        const reasons = tier ? promotionReasons(changedFiles(root), config, tier) : [];
+        if (reasons.length > 0) {
+          work.update({ last_outcome: "needs_promotion", open_question: reasons.join("; ") });
+          work.log({ step: "promotion", reasons });
+          if (values.json) print(JSON.stringify({ outcome: "needs_promotion", reasons }));
+          else {
+            print("PROMOTE: switch to feature");
+            reasons.forEach((r) => print(`  - ${r}`));
+            print("stop and tell the user: this no longer fits a task. Use `rafoflow classify --tier L` once they agree.");
+          }
+          process.exitCode = 2;
+          return;
+        }
+      }
       const g = runGate(config, root);
       if (work.exists()) work.log({ step: "gate", ok: g.ok, steps: g.steps });
       // A plan that exists must be complete for its risk class before work is called done.

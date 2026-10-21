@@ -33,9 +33,9 @@ npx rafoflow doctor
 
 | Command | What it guarantees |
 | --- | --- |
-| `rafoflow start <slug> --request "…"` | A worktree and a `work/<slug>` branch exist before any edit, with a work record |
+| `rafoflow start <slug> --request "…"` | A worktree and a `work/<slug>` branch exist before any edit, with a work record; refuses on a dirty checkout (one code work item per checkout) unless `--allow-parallel` |
 | `rafoflow classify [--tier S\|M\|L]` | A tier with reasons, never below the repo's risk markers; human override recorded |
-| `rafoflow gate` | The repo's declared gate commands, in order |
+| `rafoflow gate` | The repo's declared gate commands, in order; first re-checks the final diff against the tier and ends `needs_promotion` ("PROMOTE: switch to feature") when a task outgrew it |
 | `rafoflow review [--yes]` | Reviewers from another vendor + fixer + gate, until zero blocking findings with a green gate; escalates on no progress or after the round ceiling; checkpoint before fixing on configured tiers |
 | `rafoflow research "<q>" ["<q>"…]` | Researcher with web access answers with sourced evidence (source levels 1–4) and lists what it could not verify → `research.md` |
 | `rafoflow veto "<text>" [--match <regex>]` | A human records an option ruled out; researcher and planner start from it as a hard filter, the planner lists eliminated options, and a plan matching the veto ends `blocked` |
