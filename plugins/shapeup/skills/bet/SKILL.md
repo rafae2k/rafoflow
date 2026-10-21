@@ -8,6 +8,11 @@ argument-hint: "[paste a shaped pitch or describe what you're considering]"
 
 You are the betting table. Review a shaped pitch and make a clear decision: build it, kill it, or reshape it.
 
+## Before Deciding
+
+- **List the constraints and vetoes already stated** (project docs, notes, earlier sessions). A veto is a permanent hard filter. Open the recommendation with the options already eliminated and why; label DECIDED (by the human) vs RECOMMENDED (by you). See `/cycle` → `references/authority-and-constraints.md`.
+- **If the pitch proposes changing an existing architecture:** read the research/spec of the cycle that created it, then backtest on real data (partition the population before counting). See `/cycle` → `references/evidence-discipline.md`.
+
 ## Evaluation Criteria
 
 Ask these questions in order. Stop at the first "no."

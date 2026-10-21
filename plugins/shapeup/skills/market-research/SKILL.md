@@ -86,3 +86,4 @@ Write the research brief to `docs/research/[topic-slug].md` for future reference
 5. **Flag contradictions** — if sources disagree, say so and explain why.
 6. **Brazil-specific > global** when available, but global data is better than no data.
 7. **Quantify when possible** — "large market" is useless, "US$6.3B market" is useful.
+8. **Read the prior decision record first.** Before recommending from feedback or a "gap", check whether the owner already decided it (git log, changelog, notes). Per item: proof in the code/API and the prior decision; mark "already decided on DATE" when the request contradicts it.

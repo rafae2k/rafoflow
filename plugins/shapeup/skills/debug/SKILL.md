@@ -98,6 +98,9 @@ When the bug lives in real production state — not code you can run locally —
 - **Never assume the meaning of a status or field.** Before filtering on `status = 'X'`, run `SELECT field, COUNT(*) … GROUP BY field` and read the real values and their distribution. The obvious-looking status is often transitional or rare.
 - **Verify the premise before you conclude.** Before claiming "X doesn't exist", "the table is empty", or "N rows are affected", run a query that _proves_ it: does the JOIN drop rows? is the date window right? is the field really never populated? Present the verification numbers next to the conclusion.
 - **Sanity-check the aggregate.** Reconcile your total against a known baseline (e.g. total rows for the period) before presenting. A number that doesn't reconcile = investigate, don't ship.
+- **State provenance.** Every "verified" says where (the exact engine/environment) and the command or query. Proof on a stand-in (local database, other runtime) doesn't count for production.
+- **Complete lists come from a count.** Record the command and the total; never list from memory.
+- **Partition the population before concluding.** An aggregate that merges historical and live data (or two origins) tells two stories as one. Split, then reconcile with a baseline. (More in `/cycle` → `references/evidence-discipline.md`.)
 - **"Not implemented" needs double proof.** Grep the code AND query production. A field that looks missing is often already there under a different name.
 
 ## Output Format

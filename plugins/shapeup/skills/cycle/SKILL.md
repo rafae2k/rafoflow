@@ -59,6 +59,8 @@ Source quality beats result quantity. In order of trust:
 
 **Banned as evidence:** SEO content farms, authorless listicles, AI-generated blog spam, marketing dressed as a technical article. If a claim only exists there, treat it as **unverified** — prove it by POC/query or drop it. Every claim in `research.md` cites its URL and tier; a tier-4 claim never carries an architectural decision alone.
 
+Apply [references/evidence-discipline.md](references/evidence-discipline.md): proof states where and with what, complete lists come from counts, and aggregates are partitioned before they're believed.
+
 Synthesize into `research.md` (numbered parts, tables with concrete data, file paths, URLs, derived decisions). **"Doesn't exist / isn't implemented" needs double proof** — grep the code AND query the runtime — before it enters research as fact.
 
 In orchestrated mode: **don't pause** — flow straight into shaping, accumulating any open decisions.
@@ -130,6 +132,7 @@ These follow the **durable × dated** discipline and a machine-readable frontmat
 ## Guardrails
 
 - **Never derive from the stated goal.** If research shows the real problem is different, that's a Checkpoint ① decision — never a silent expansion.
+- **Authority is explicit.** Silence is not approval; a subagent's recommendation is not authorization; a veto stated in any session is permanent. Label DECIDED (human) vs RECOMMENDED (you). See [references/authority-and-constraints.md](references/authority-and-constraints.md).
 - **Decisions accumulate, they don't interrupt.** During research/shape/spec, note each open architectural decision instead of asking on the spot. Batch them all at Checkpoint ①.
 - **Max 3 parallel subagents** — fork exhaustion on macOS beyond that.
 - **Large deliverables go to a file** (write + summarize in chat), never dumped into the response.
