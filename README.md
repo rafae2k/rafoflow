@@ -55,6 +55,7 @@ Prefer to drive by hand? Skip `/cycle` and call the skills directly.
 | `@reviewer` | code review before shipping | `@reviewer "review recent changes"` |
 | `@researcher` | deep research with citations (Exa) | `@researcher "HRV readiness scoring"` |
 | `@closer` | pre-ship checklist + launch copy | `@closer "prepare the release notes"` |
+| `@spec-reviewer` | blind, role-based review of a class A/B spec | `@spec-reviewer "production role: spec.md"` |
 
 **Skills** — inline methodology applied in the current conversation:
 
@@ -74,6 +75,8 @@ Prefer to drive by hand? Skip `/cycle` and call the skills directly.
 | `/market-research` | evidence-based research method |
 
 Two skills carry battle-tested discipline ported from a production platform: **`/engineer`** (test the seam not just the unit; iterate-until-green; you-own-the-doc) and **`/debug`** (production investigation — query the source of truth, never assume a status's meaning, double-proof "it doesn't exist").
+
+Process discipline lives in `/cycle`'s references and is applied by the skills and agents: **risk class** (A/B/C) deciding how much verification a spec owes; the **learning loop** (every error changes a layer; no anomaly becomes "normal" without a written acceptance); **authority rules** (silence is not approval, a subagent's recommendation is not authorization, a veto is permanent); **evidence discipline** (provenance of proof, lists from counts, partition before you count); a **two-layer output contract**; and **subagent hygiene**. Small changes take the `/task` fast lane, which promotes to `/cycle` the moment direction opens up.
 
 **→ [Skills in practice](docs/skills-in-practice.md)** shows a worked example of every skill and agent — realistic input to realistic output — with `/debug` walked end to end (reproduce → hypotheses → binary search → five-whys → fix → regression test → production query).
 
@@ -100,8 +103,8 @@ Two skills carry battle-tested discipline ported from a production platform: **`
 .claude-plugin/marketplace.json   the rafoflow marketplace manifest
 plugins/shapeup/
   .claude-plugin/plugin.json      the shapeup plugin manifest
-  agents/*.md                     the 7 autonomous agents
-  skills/*/SKILL.md               the 11 inline skills (+ cycle/references/)
+  agents/*.md                     the 8 autonomous agents
+  skills/*/SKILL.md               the 13 inline skills (+ cycle/references/)
 ```
 
 ## Local dev

@@ -277,7 +277,7 @@ The skill's own one-note record:
 ## Bug: weekly summary undercounts / shows 0 for far-east users
 Root cause: weekOf() bucketed by UTC calendar date instead of the user's local date; the app's tz-conversion pattern was applied everywhere except this path.
 Fix: pass userTimeZone into weekOf(); convert to local before computing the week.
-Prevents recurrence: regression test on a UTC+13 late-evening timestamp; audit of streak/today/notification bucketing for the same UTC leak.
+Prevention (layer that changed): regression test on a UTC+13 late-evening timestamp; plus a reviewer question added — "does this bucket by date without the user's time zone?" — after an audit of streak/today/notification bucketing found the same UTC leak.
 ```
 
 ### Investigating production data — when the bug lives in the live system
@@ -416,6 +416,38 @@ The rules that keep it honest: prefer recent, peer-reviewed sources; cite every 
 
 ---
 
+## `/task` and `/explore` — the two side lanes
+
+**`/task`** is for a change that is already understood. **Input:** `/task "sort the workout history list by date, newest first"`
+
+```text
+Plan (4 lines)
+- Change: sort in HistoryList by startedAt desc (HistoryList.tsx, one file).
+- Test: unit test with three workouts out of order; assert the order.
+- Gate: typecheck + lint + test.
+- Verify afterward: open the history screen on a real account; newest is on top.
+```
+
+It runs: code + test, gate, one checkpoint (ship), changelog line, one check in the real system. If midway you find the list is paginated server-side and the sort needs a new index, it stops: _"This needs a schema change with a backfill — promoting to `/cycle`."_ That is the process working.
+
+**`/explore`** is research with no commitment. **Input:** `/explore "can we sync workouts offline?"`
+
+```text
+Picture (5 lines): the local store can hold it; the open risk is conflict resolution
+when two devices edit the same workout. Spike confirmed the store handles 10k rows.
+
+Findings
+1. Local store supports the volume (spike, discarded; run on the target runtime).
+2. Conflict resolution has no off-the-shelf answer that fits (docs: <url>).
+
+Exit: becomes a CYCLE — direction is open (last-write-wins vs merge). Not started;
+waiting for your yes.
+```
+
+An explore always ends in an explicit exit — cycle, task, backlog, or "dies here" with the evidence why — and never starts the next step by itself.
+
+---
+
 ## `/cycle` — the whole loop, orchestrated
 
 **Input:** `/cycle "let users export their workout history as CSV"`
@@ -482,6 +514,7 @@ Same discipline as the skills, run autonomously in isolated context. One line an
 - **`@debugger`** — reproduces, hypothesizes, binary-searches to the root cause; never masks with a nil check, says "root cause uncertain" when it is. `@debugger "weekly summary shows 0 workouts for some users"`
 - **`@reviewer`** — read-only review for simplicity and blast radius; delivers SHIP IT / FIX THEN SHIP / NEEDS REWORK and never invents problems. `@reviewer "review the CSV export changes"`
 - **`@researcher`** — deep Exa research with citations, cross-referenced, contrarian view included; never fabricates a source. `@researcher "evidence for HRV-based readiness scoring"`
+- **`@spec-reviewer`** — blind, read-only review of a class A/B spec from one role (architecture, facts, or production); every finding gets a destination, never marked resolved by itself. `@spec-reviewer "production role: docs/cycles/07-csv-export/spec.md"`
 - **`@closer`** — pre-ship checklist and launch copy tailored to the release target; fights "one more thing," never delays for polish. `@closer "prepare the release notes for CSV export"`
 
 Agents and skills share the same methodology files — the agent's frontmatter lists the skills it carries — so a `@debugger` runs the exact `/debug` method above, just out of band. Pick the agent when you want the work done without watching it; pick the skill when you want to drive.
