@@ -39,7 +39,8 @@ The only forbidden moves: skipping a phase _forward_, or continuing against a sp
 1. Number the cycle: `ls docs/cycles/` and increment — only when work actually starts (the number is a claim). An idea with no code lives in the backlog. One code-editing stream per checkout; parallel streams use worktrees.
 2. Create `docs/cycles/NN-slug/` with a `README.md` — status, problem, tasks checklist, and "done means …".
 3. State the deliverable in one line — `Deliverable: <artifact> in <format>` — and copy it into the README's "done means". If a skill was invoked, its product is the deliverable. Research is a means, never the end. (See [references/output-contract.md](references/output-contract.md).)
-4. Start the living plan (a todo list of the phases). Keep it current — it's how the human follows along without babysitting.
+4. Check the environment: if the repo has no `.env.example` or the variables the work needs are undocumented or empty, run `/setup` first. Real data comes from the filled env, never from guesses.
+5. Start the living plan (a todo list of the phases). Keep it current — it's how the human follows along without babysitting.
 
 ## Phase 1 — Research (`research.md`) · parallel subagents
 

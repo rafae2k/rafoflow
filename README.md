@@ -61,6 +61,7 @@ Prefer to drive by hand? Skip `/cycle` and call the skills directly.
 
 | Skill | What it does |
 | --- | --- |
+| `/setup` | make a repo agent-ready: name and comment every env var, wire the env file, write the agent rules and real-data commands |
 | `/cycle` | run the whole loop, orchestrated, with artifacts + 2 checkpoints |
 | `/task` | small, already-understood change: short plan, code + test, gate, ship |
 | `/explore` | research-only spike or feasibility check; ends in an explicit exit |
@@ -104,7 +105,7 @@ Process discipline lives in `/cycle`'s references and is applied by the skills a
 plugins/shapeup/
   .claude-plugin/plugin.json      the shapeup plugin manifest
   agents/*.md                     the 8 autonomous agents
-  skills/*/SKILL.md               the 13 inline skills (+ cycle/references/)
+  skills/*/SKILL.md               the 14 inline skills (+ cycle/references/)
 ```
 
 ## Local dev

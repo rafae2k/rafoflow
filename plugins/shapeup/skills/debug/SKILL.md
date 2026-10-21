@@ -92,7 +92,7 @@ One short note:
 
 ## Investigating Production Data
 
-When the bug lives in real production state — not code you can run locally — the scientific method still holds, but your "experiments" are queries against the live system. Extra rules, because a wrong query yields a _confident_ wrong conclusion:
+When the bug lives in real production state — not code you can run locally — the scientific method still holds, but your "experiments" are queries against the live system. If the env is missing, undocumented or empty, stop and run `/setup` instead of guessing credentials; load the env and never print secret values. Extra rules, because a wrong query yields a _confident_ wrong conclusion:
 
 - **Query the source of truth directly.** Not a dashboard, convenience layer, or derived view that may filter or diverge from the raw data. Those have produced wrong numbers before.
 - **Never assume the meaning of a status or field.** Before filtering on `status = 'X'`, run `SELECT field, COUNT(*) … GROUP BY field` and read the real values and their distribution. The obvious-looking status is often transitional or rare.

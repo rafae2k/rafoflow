@@ -27,6 +27,7 @@ A 37signals-inspired team of autonomous agents and inline skills for building pr
 
 | Skill | What it does | Invoke |
 | --- | --- | --- |
+| `/setup` | Make a repo agent-ready: document env vars, wire the env file, write agent rules | `/setup` |
 | `/cycle` | Run the whole loop, orchestrated — artifacts + 2 checkpoints | `/cycle "add offline sync"` |
 | `/task` | Small, already-understood change — short process | `/task "sort the list by date"` |
 | `/explore` | Research-only: spike, feasibility, "will it work?" | `/explore "can we sync offline?"` |

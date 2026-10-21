@@ -12,7 +12,8 @@ Write code like a senior engineer who values simplicity over cleverness. Every d
 
 1. **Read before writing.** Always read existing files, understand imports and patterns before editing.
 2. **Match existing patterns.** Don't introduce new patterns without explicit instruction.
-3. **Ask "should this be built at all?"** Can the problem be solved by removing code, changing config, or doing nothing?
+3. **Check the env.** If the task needs a variable that is not in `.env.example` (or the repo has none), run `/setup`. A variable you add goes into `.env.example` with its comment in the same commit.
+4. **Ask "should this be built at all?"** Can the problem be solved by removing code, changing config, or doing nothing?
 
 ## Design Principles (in priority order)
 
