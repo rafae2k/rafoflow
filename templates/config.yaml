@@ -34,3 +34,13 @@ risk_markers: []
 # Human checkpoint before the fixer edits code, per tier.
 # checkpoints:
 #   M: { before_fix: true }
+
+# Guard: enforced from outside the agent by a harness hook (`rafoflow init` installs it for Claude Code;
+# `rafoflow doctor` reports it). A repo can add entries here, never remove ones an inherited layer set.
+# guard:
+#   # Regexes over shell commands. A match runs only with the shipped paths committed and the gate green. `--dry-run` passes.
+#   ship_commands: ["\\bwrangler\\s+deploy\\b", "\\bpnpm\\s+publish\\b"]
+#   # The bundle is built from the working tree: uncommitted code here blocks the ship (production must trace to a commit).
+#   ship_requires_clean: ["packages/**"]
+#   # The agent does not edit the files that define its own gate; a human records `rafoflow approve protected`.
+#   protected_paths: ["eslint.config.*", "Makefile"]

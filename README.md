@@ -14,6 +14,7 @@ v2 moves the guarantees into a small CLI and keeps the skills thin:
 - **Base agents** — roles (classifier, researcher, planner, reviewer, fixer, doc gardener) defined as prompt + allowed tools + output schema, executed by the orchestrator in Claude Code, Codex or Pi.
 - **Model routing by complexity** — an LLM classifier assigns each piece of work a tier (`S`, `M`, `L`); risk markers declared by the repo are hard floors; a role × tier table picks harness, model and effort; reviewers come from a different vendor than the implementer.
 - **Process and verification loops** — phases in code with typed outcomes, a review loop that stops on convergence, gates from the repo's own commands, human checkpoints.
+- **Guards from outside the agent** — a harness hook (`rafoflow guard --hook`) denies ship commands unless the shipped paths are committed and the gate is green, denies edits that land in the main checkout instead of the worktree, and denies edits to the files that define the gate itself (lint, test and hook config) without a human approval. A guarantee the agent can choose to skip is advice; this one it cannot.
 - **Response style** — a router, installed as a managed block in `AGENTS.md`, picks the response type (incident, decision, status, investigation, procedure, explanation, delegation, casual) and applies a short template: answer first, detail after, and warnings, numbers, errors and next steps never cut. Built from ASD-STE100, BLUF, SBAR and SRE postmortems.
 - **Measured** — promptfoo eval suites run the real roles on the real harnesses.
 
@@ -38,7 +39,8 @@ npx rafoflow doctor
 | `rafoflow review [--yes]` | Reviewers from another vendor + fixer + gate, until zero blocking findings with a green gate; escalates on no progress or after the round ceiling; checkpoint before fixing on configured tiers |
 | `rafoflow research "<q>" ["<q>"…]` | Researcher with web access answers with sourced evidence (source levels 1–4) and lists what it could not verify → `research.md` |
 | `rafoflow plan` | Planner writes direction, rejected alternatives, steps with files, exit criteria and risks → `plan.md` |
-| `rafoflow approve plan` | A human records the approval (agents are told never to run it) |
+| `rafoflow approve plan\|protected` | A human records the approval (agents are told never to run it); `protected` unlocks edits to protected paths for this work item |
+| `rafoflow guard --hook` | Harness PreToolUse hook: ship commands need committed shipped paths and a green gate; edits stay in the worktree; protected paths need approval. `init` installs it for Claude Code; elsewhere `rafoflow ci` is the backstop |
 | `rafoflow docs [--check]` | Finds docs the change made untrue (explicit map, file and symbol mentions); the doc gardener updates or justifies each; verifies nothing was skipped and no code was touched |
 | `rafoflow ci` | Writes a GitHub Actions workflow that runs the repo's gate on every PR, with no rafoflow dependency in CI; `doctor` flags it when stale |
 | `rafoflow block "<question>" [--kind …]` | The question is recorded as `blocked`, `needs_research` or `needs_poc` and the agent stops |

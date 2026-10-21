@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { readFileSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { parseArgs } from "node:util";
@@ -10,8 +11,9 @@ import { run } from "./exec.js";
 import { workflowState, writeWorkflow } from "./ci.js";
 import { affectedDocs, gardenDocs, listDocs, verifyDocs } from "./docs.js";
 import { runGate } from "./gate.js";
+import { detectCheckout, evaluate, hookOutput, type HookInput } from "./guard.js";
 import { addWorktree, changedFiles, currentBranch, diffText, repoRoot } from "./git.js";
-import { init, responseStyleState, skillDrift } from "./init.js";
+import { guardHookState, init, responseStyleState, skillDrift } from "./init.js";
 import { plan, research } from "./research.js";
 import { reviewLoop } from "./review.js";
 import { reviewerRoutes, sessionVendor } from "./routing.js";
@@ -26,7 +28,8 @@ Usage:
   rafoflow classify ["<request>"] [--tier S|M|L]  classify the current work (LLM, risk floors, human override)
   rafoflow research "<question>" ["<question>"...]  researcher role: answers with sourced evidence -> research.md
   rafoflow plan                                   planner role: direction, steps, exit criteria -> plan.md
-  rafoflow approve plan [--note "<text>"]         record a human approval (run it yourself, after reading)
+  rafoflow approve plan|protected [--note "<text>"]  record a human approval (run it yourself, after reading)
+  rafoflow guard --hook                           harness PreToolUse hook: reads the tool call on stdin, denies ship without a green gate, edits outside the worktree and edits to protected paths
   rafoflow gate                                   run the repo's gate commands
   rafoflow review [--tier S|M|L] [--yes]          review loop until convergence
   rafoflow docs [--check]                         find docs the change made untrue; update or justify each
@@ -47,6 +50,7 @@ const { values, positionals } = parseArgs({
     kind: { type: "string" },
     note: { type: "string" },
     check: { type: "boolean", default: false },
+    hook: { type: "boolean", default: false },
     yes: { type: "boolean", default: false },
     json: { type: "boolean", default: false },
     help: { type: "boolean", short: "h", default: false },
@@ -101,6 +105,7 @@ async function main(): Promise<void> {
       const r = init(root, harness);
       print(`config: .rafoflow/config.yaml (${r.config})`);
       r.skills.forEach((s) => print(`skill: ${s}`));
+      print(`guard hook (.claude/settings.json): ${r.guardHook}${r.guardHook === "skipped" ? " — Claude Code only; use `rafoflow ci` as the backstop" : ""}`);
       print(`AGENTS.md response style: ${r.agentsMd}`);
       if (r.claudeMd === "created") print("CLAUDE.md: created as `@AGENTS.md` so Claude Code reads the same instructions");
       if (r.claudeMd === "missing-import") print("warning: CLAUDE.md exists but does not import AGENTS.md — add `@AGENTS.md` so Claude Code gets the response style");
@@ -261,6 +266,24 @@ async function main(): Promise<void> {
       return;
     }
 
+    case "guard": {
+      if (!values.hook) fail("usage: rafoflow guard --hook   (reads a PreToolUse payload on stdin)");
+      let input: HookInput = {};
+      try {
+        input = JSON.parse(readFileSync(0, "utf8")) as HookInput;
+      } catch {
+        return; // not a hook payload: never block on a parse problem
+      }
+      const checkout = detectCheckout(input.cwd ?? process.cwd());
+      if (!checkout) return;
+      const config = loadConfig(checkout.top).config;
+      const d = evaluate(input, { config, gate: (cwd) => runGate(config, cwd) });
+      const work = new Work(checkout.top, workIdFromBranch(checkout.branch));
+      if (d.decision === "deny" && work.exists()) work.log({ step: "guard", decision: d.decision, rule: d.rule, tool: input.tool_name, reason: d.reason?.split("\n")[0] });
+      process.stdout.write(hookOutput(d));
+      return;
+    }
+
     case "ci": {
       const { root, config } = context();
       const path = writeWorkflow(root, config);
@@ -318,6 +341,7 @@ async function main(): Promise<void> {
       const cs = run(binaries.codex, ["login", "status"]);
       print(`codex auth: ${(cs.out + cs.err).trim() || "unknown"}`);
       const rs = responseStyleState(root);
+      print(`guard hook (Claude Code): ${guardHookState(root)}${guardHookState(root) !== "installed" ? " (run `rafoflow init`; other harnesses rely on `rafoflow ci` as the backstop)" : ""}`);
       print(`response style: AGENTS.md block ${rs.agentsMd}; CLAUDE.md ${rs.claudeMd}`);
       print("skills:");
       skillDrift(root).forEach((s) => print(`  ${s.state.padEnd(8)} ${s.path}${s.installed && s.installed !== s.expected ? ` (installed ${s.installed}, package ${s.expected})` : ""}`));

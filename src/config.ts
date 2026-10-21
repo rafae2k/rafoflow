@@ -44,6 +44,14 @@ export const configSchema = z.object({
   }),
   checkpoints: perTier(z.object({ before_fix: z.boolean() })),
   worktree: z.object({ dir: z.string(), branch: z.string() }),
+  guard: z.object({
+    /** Regexes matched against shell commands the agent runs; a match is a ship command (deploy, publish, migration apply). */
+    ship_commands: z.array(z.string()),
+    /** Globs that must be fully committed before a ship command runs (the bundle is built from the working tree). */
+    ship_requires_clean: z.array(z.string()),
+    /** Globs the agent may not edit (its own gate, hook, lint and test config) without a human `approve protected`. */
+    protected_paths: z.array(z.string()),
+  }),
 });
 
 export type Config = z.infer<typeof configSchema>;
@@ -86,6 +94,11 @@ export const DEFAULT_CONFIG: Config = {
   checkpoints: { S: { before_fix: false }, M: { before_fix: false }, L: { before_fix: true } },
   worktree: { dir: "../{repo}-worktrees/{slug}", branch: "work/{slug}" },
   ci: { provider: "github", node_version: "22" },
+  guard: {
+    ship_commands: ["\\bwrangler\\s+deploy\\b", "\\b(npm|pnpm|yarn)\\s+(run\\s+)?(publish|deploy)\\b"],
+    ship_requires_clean: [],
+    protected_paths: [".rafoflow/config.yaml", ".claude/settings.json", ".claude/settings.local.json", "**/eslint.config.*", "**/.eslintrc*", "**/vitest.config.*", "**/jest.config.*"],
+  },
 };
 
 export const CONFIG_PATH = ".rafoflow/config.yaml";
@@ -120,6 +133,15 @@ export function enforceGuardrails(upper: Config, merged: Config): { config: Conf
     if (!config.gate.includes(cmd)) {
       violations.push(`gate step "${cmd}" cannot be removed (required by an inherited layer)`);
       config.gate.push(cmd);
+    }
+  }
+  // The guard can grow, never shrink: a repo cannot drop a ship command or a protected path a preset declared.
+  for (const key of ["ship_commands", "ship_requires_clean", "protected_paths"] as const) {
+    for (const item of upper.guard[key]) {
+      if (!config.guard[key].includes(item)) {
+        violations.push(`guard.${key} entry "${item}" cannot be removed (required by an inherited layer)`);
+        config.guard[key].push(item);
+      }
     }
   }
   if (config.review.max_rounds > upper.review.max_rounds) {

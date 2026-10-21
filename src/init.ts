@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync, appendFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fill, PACKAGE_ROOT, PACKAGE_VERSION } from "./assets.js";
 import { CONFIG_PATH } from "./config.js";
 import type { Harness } from "./types.js";
@@ -27,6 +27,7 @@ export interface InitResult {
   skills: string[];
   agentsMd: "created" | "updated" | "unchanged";
   claudeMd: "created" | "imports-agents" | "missing-import";
+  guardHook: "installed" | "kept" | "skipped";
 }
 
 const BLOCK_START = "<!-- rafoflow:response-style:start -->";
@@ -69,6 +70,39 @@ function installResponseStyle(repoRoot: string): Pick<InitResult, "agentsMd" | "
   return { agentsMd, claudeMd: readFileSync(claudePath, "utf8").includes("@AGENTS.md") ? "imports-agents" : "missing-import" };
 }
 
+const GUARD_COMMAND = "npx rafoflow guard --hook";
+const GUARD_MATCHER = "Bash|Write|Edit|MultiEdit|NotebookEdit";
+const CLAUDE_SETTINGS = ".claude/settings.json";
+
+interface HookEntry {
+  matcher?: string;
+  hooks?: { type?: string; command?: string; timeout?: number }[];
+}
+
+const hasGuard = (entries: HookEntry[] | undefined): boolean => (entries ?? []).some((e) => (e.hooks ?? []).some((h) => h.command === GUARD_COMMAND));
+
+/** Merges the guard into `.claude/settings.json` PreToolUse without touching other settings or hooks. */
+export function installGuardHook(repoRoot: string): "installed" | "kept" {
+  const path = join(repoRoot, CLAUDE_SETTINGS);
+  const settings = existsSync(path) ? (JSON.parse(readFileSync(path, "utf8")) as Record<string, any>) : {};
+  const hooks = (settings.hooks ??= {}) as Record<string, HookEntry[]>;
+  if (hasGuard(hooks.PreToolUse)) return "kept";
+  (hooks.PreToolUse ??= []).push({ matcher: GUARD_MATCHER, hooks: [{ type: "command", command: GUARD_COMMAND, timeout: 900 }] });
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, JSON.stringify(settings, null, 2) + "\n");
+  return "installed";
+}
+
+export function guardHookState(repoRoot: string): "installed" | "not installed" {
+  const path = join(repoRoot, CLAUDE_SETTINGS);
+  if (!existsSync(path)) return "not installed";
+  try {
+    return hasGuard((JSON.parse(readFileSync(path, "utf8")) as { hooks?: { PreToolUse?: HookEntry[] } }).hooks?.PreToolUse) ? "installed" : "not installed";
+  } catch {
+    return "not installed";
+  }
+}
+
 export function init(repoRoot: string, harness: Harness): InitResult {
   const configPath = join(repoRoot, CONFIG_PATH);
   let config: InitResult["config"] = "kept";
@@ -94,7 +128,8 @@ export function init(repoRoot: string, harness: Harness): InitResult {
   const current = existsSync(gitignore) ? readFileSync(gitignore, "utf8") : "";
   if (!current.split("\n").includes(line)) appendFileSync(gitignore, `${current && !current.endsWith("\n") ? "\n" : ""}${line}\n`);
 
-  return { config, skills: installed, ...installResponseStyle(repoRoot) };
+  const guardHook = harness === "claude" ? installGuardHook(repoRoot) : "skipped";
+  return { config, skills: installed, guardHook, ...installResponseStyle(repoRoot) };
 }
 
 /** State of the response-style block in AGENTS.md, and whether Claude Code will see it. */
