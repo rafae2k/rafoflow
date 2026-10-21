@@ -36,3 +36,10 @@ tests:
     assert:
       - type: javascript
         value: file://../lib/assert-planner.mjs:respectsVeto
+  - description: class A — a migration with a backfill must carry failure modes, undo and a verification matrix
+    vars:
+      tier: L
+      request: Migrate the orders table from float amounts to integer cents and backfill the existing rows in production.
+    assert:
+      - type: javascript
+        value: file://../lib/assert-planner.mjs:hasClassASections

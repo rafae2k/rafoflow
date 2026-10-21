@@ -81,6 +81,10 @@ research ⇄ plan → implement ⇄ review → docs → gate → ship
 - **Human checkpoints:** configurable per tier (for example direction and ship on `L`; ship only on `S`).
 - **Worktree:** `start` creates the worktree, branch and work folder. It is a command, not an instruction.
 
+### Tiers and risk classes
+
+The tier picks the model; the risk class picks the rigor the plan must show. They line up: `S` is class C (UI, docs), `M` is class B (internal logic), `L` is class A (money, canonical writes, migrations, anything irreversible). The tier is a floor for the class, and when unsure the plan goes one class up. A class A plan carries a failure-modes table (mode, effect, how detected, undo) and a verification matrix (claim, where it ran, command); `rafoflow approve plan` and `rafoflow gate` refuse a plan without them. The lint is regex-level on purpose: it proves the step exists, a human and the reviewer judge its quality.
+
 ## Layers and customization
 
 `package defaults < organization preset < repository config`, with explicit `extends` (in the style of Renovate presets). Guardrails (gates, mandatory checkpoints) can only be tightened by lower layers, never loosened (in the style of GitHub rulesets).

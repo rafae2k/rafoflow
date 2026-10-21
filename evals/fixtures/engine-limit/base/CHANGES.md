@@ -1,0 +1,3 @@
+# Changes
+
+- Initial release: `toLikeClause`.

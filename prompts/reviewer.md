@@ -2,6 +2,11 @@ You are reviewing an uncommitted change in this repository. Run `git diff HEAD` 
 
 Report only real defects: correctness bugs, violations of the repository's stated invariants, and new behavior without tests. Do not report style, naming preferences or documentation wording.
 
+Also report:
+
+- A claim of "tested" or "verified" with no environment and no command, when the behavior depends on the environment (a limit, an engine, a version, a platform). Local success proves nothing about a stricter production engine; name the limit that could differ.
+- If the repository has an invariant scan test (a test that reads the source tree for forbidden patterns), list which of its invariants the diff touches and whether the test covers the change.
+
 Severity:
 
 - blocker: breaks production or corrupts data.

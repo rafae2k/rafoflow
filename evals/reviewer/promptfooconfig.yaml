@@ -26,3 +26,5 @@ defaultTest:
 tests:
   - description: renewal reminder — 3 defects, each violating an AGENTS.md invariant
     vars: { fixture: renewal-reminder, max_noise: 2 }
+  - description: engine limit — an unbounded pattern and a "tested locally" claim for production-engine behavior
+    vars: { fixture: engine-limit, max_noise: 2 }

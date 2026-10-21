@@ -1,10 +1,29 @@
 {
   "type": "object",
   "additionalProperties": false,
-  "required": ["direction", "why", "eliminated_options", "alternatives", "steps", "exit_criteria", "risks", "outcome", "open_question"],
+  "required": ["direction", "why", "risk", "eliminated_options", "alternatives", "steps", "exit_criteria", "risks", "failure_modes", "verification", "outcome", "open_question"],
   "properties": {
     "direction": { "type": "string" },
     "why": { "type": "string" },
+    "risk": { "type": "string", "enum": ["A", "B", "C"] },
+    "failure_modes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["mode", "effect", "detection", "undo"],
+        "properties": { "mode": { "type": "string" }, "effect": { "type": "string" }, "detection": { "type": "string" }, "undo": { "type": "string" } }
+      }
+    },
+    "verification": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["claim", "where", "command"],
+        "properties": { "claim": { "type": "string" }, "where": { "type": "string" }, "command": { "type": "string" } }
+      }
+    },
     "eliminated_options": {
       "type": "array",
       "items": {

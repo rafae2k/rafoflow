@@ -1,0 +1,15 @@
+{
+  "description": "Two seeded defects. The filter builds one pattern from an unbounded word list (the production backend rejects patterns over 50 bytes; local tests use short lists), and the change note claims 'tested locally' for a behavior that depends on the production backend.",
+  "defects": [
+    {
+      "id": "unbounded-pattern-length",
+      "file": "src/search.js",
+      "keywords": ["50", "byte", "length", "limit", "unbounded", "too long", "split"]
+    },
+    {
+      "id": "tested-without-environment",
+      "file": "CHANGES.md",
+      "keywords": ["tested", "locally", "production backend", "environment", "verified", "where"]
+    }
+  ]
+}

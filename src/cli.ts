@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { parseArgs } from "node:util";
@@ -15,7 +15,8 @@ import { runGate } from "./gate.js";
 import { detectCheckout, evaluate, hookOutput, protectedPaths, type HookInput } from "./guard.js";
 import { addWorktree, changedFiles, currentBranch, diffText, repoRoot } from "./git.js";
 import { guardHookState, init, responseStyleState, skillDrift } from "./init.js";
-import { plan, research } from "./research.js";
+import { lintPlan } from "./plan-lint.js";
+import { plan, research, type PlanOutput } from "./research.js";
 import { reviewLoop } from "./review.js";
 import { reviewerRoutes, sessionVendor } from "./routing.js";
 import { TIERS, type Finding, type Harness, type Tier } from "./types.js";
@@ -89,6 +90,12 @@ function ensureWork(work: Work): WorkState {
   return work.read();
 }
 
+function readPlan(work: Work): PlanOutput {
+  const path = join(work.dir, "plan.json");
+  if (!existsSync(path)) fail("no plan to approve: run `rafoflow plan` first");
+  return JSON.parse(readFileSync(path, "utf8")) as PlanOutput;
+}
+
 async function ask(question: string): Promise<boolean> {
   if (!process.stdin.isTTY) return false;
   const rl = createInterface({ input: process.stdin, output: process.stdout });
@@ -155,6 +162,12 @@ async function main(): Promise<void> {
       if (config.gate.length === 0) fail("no gate configured: set `gate:` and `commands:` in .rafoflow/config.yaml");
       const g = runGate(config, root);
       if (work.exists()) work.log({ step: "gate", ok: g.ok, steps: g.steps });
+      // A plan that exists must be complete for its risk class before work is called done.
+      if (work.exists() && existsSync(join(work.dir, "plan.json"))) {
+        const issues = lintPlan(readPlan(work), work.read().classification?.tier ?? "M");
+        if (!values.json) issues.forEach((i) => print(`plan-lint: ${i}`));
+        if (issues.length > 0) g.ok = false;
+      }
       if (values.json) print(JSON.stringify(g));
       else {
         g.steps.forEach((s) => print(`${s.ok ? "ok  " : "FAIL"} ${s.name} (${Math.round(s.ms / 1000)}s)`));
@@ -234,6 +247,13 @@ async function main(): Promise<void> {
       const { work } = context();
       const what = args[0] ?? fail("usage: rafoflow approve <what> [--note \"<text>\"]   (e.g. plan)");
       const state = ensureWork(work);
+      if (what === "plan") {
+        const issues = lintPlan(readPlan(work), state.classification?.tier ?? "M");
+        if (issues.length > 0) {
+          issues.forEach((i) => print(`plan-lint: ${i}`));
+          fail("the plan is incomplete for its risk class: send it back to the planner (`rafoflow plan`)");
+        }
+      }
       const approval = { what, at: new Date().toISOString(), ...(values.note ? { note: values.note } : {}) };
       work.update({ approvals: [...(state.approvals ?? []), approval] });
       work.log({ step: "approve", ...approval });
