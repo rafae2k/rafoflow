@@ -14,6 +14,7 @@ commands:
   # test: pnpm test
   # lint: pnpm lint
   # docs_lint: pnpm docs:lint
+  # env: npx rafoflow env --check   # fails when code reads a variable missing from .env.example
 
 # Which commands make up the gate, in order.
 gate: []

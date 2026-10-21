@@ -39,6 +39,23 @@ export function responseStyleBlock(version: string): string {
   return `${BLOCK_START}\n<!-- managed by rafoflow ${version}: edit the package, or delete the markers to take ownership -->\n${body}\n${BLOCK_END}`;
 }
 
+const ENV_START = "<!-- rafoflow:env-rules:start -->";
+const ENV_END = "<!-- rafoflow:env-rules:end -->";
+
+/** The environment-variable rules, as a second managed block in AGENTS.md. */
+export function envRulesBlock(version: string): string {
+  const body = readFileSync(join(PACKAGE_ROOT, "templates", "agents-env.md"), "utf8").trim();
+  return `${ENV_START}\n<!-- managed by rafoflow ${version}: edit the package, or delete the markers to take ownership -->\n${body}\n${ENV_END}`;
+}
+
+/** Inserts or replaces a block between its own markers; everything else is left untouched. */
+function upsertBetween(content: string, block: string, start: string, end: string): string {
+  const a = content.indexOf(start);
+  const b = content.indexOf(end);
+  if (a !== -1 && b > a) return content.slice(0, a) + block + content.slice(b + end.length);
+  return `${content}${content && !content.endsWith("\n") ? "\n" : ""}${content ? "\n" : ""}${block}\n`;
+}
+
 /** Inserts the block, or replaces the existing one between the markers. Everything else is left untouched. */
 export function upsertBlock(content: string, block: string): string {
   const start = content.indexOf(BLOCK_START);
@@ -58,7 +75,7 @@ export function readBlockVersion(content: string): string | undefined {
 function installResponseStyle(repoRoot: string): Pick<InitResult, "agentsMd" | "claudeMd"> {
   const agentsPath = join(repoRoot, "AGENTS.md");
   const before = existsSync(agentsPath) ? readFileSync(agentsPath, "utf8") : undefined;
-  const after = upsertBlock(before ?? "", responseStyleBlock(PACKAGE_VERSION));
+  const after = upsertBetween(upsertBlock(before ?? "", responseStyleBlock(PACKAGE_VERSION)), envRulesBlock(PACKAGE_VERSION), ENV_START, ENV_END);
   if (after !== before) writeFileSync(agentsPath, after);
   const agentsMd = before === undefined ? "created" : after === before ? "unchanged" : "updated";
 

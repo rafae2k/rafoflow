@@ -39,3 +39,18 @@ tests:
     assert:
       - { type: skill-used, value: task }
       - { type: not-skill-used, value: feature }
+  - description: configure the repo → setup
+    vars: { request: "I just cloned this repo. Help me configure the environment so it runs on my machine." }
+    assert:
+      - { type: skill-used, value: setup }
+      - { type: not-skill-used, value: feature }
+  - description: command fails on a missing variable → setup
+    vars: { request: "The app crashes on start with 'STRIPE_API_KEY is not defined'. Get my environment set up." }
+    assert:
+      - { type: skill-used, value: setup }
+      - { type: not-skill-used, value: task }
+  - description: small change that mentions a key in a label → task, not setup
+    vars: { request: "Change the label of the API key field in src/settings.html to 'Access key'." }
+    assert:
+      - { type: skill-used, value: task }
+      - { type: not-skill-used, value: setup }

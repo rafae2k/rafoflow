@@ -5,6 +5,7 @@ import { createInterface } from "node:readline/promises";
 import { parseArgs } from "node:util";
 import { AgentError, binaries, runAgent } from "./adapters.js";
 import { PACKAGE_VERSION } from "./assets.js";
+import { setupEnv } from "./env.js";
 import { classify, promotionReasons } from "./classify.js";
 import { addConstraint } from "./constraints.js";
 import { loadConfig } from "./config.js";
@@ -33,6 +34,7 @@ Usage:
   rafoflow approve plan|protected [--note "<text>"]  record a human approval (run it yourself, after reading)
   rafoflow guard --hook                           harness PreToolUse hook: reads the tool call on stdin, denies ship without a green gate, edits outside the worktree and edits to protected paths
   rafoflow veto "<text>" [--match "<regex>"]        record an option the owner ruled out; agents never propose it (run it yourself)
+  rafoflow env [--check]                          scan the code for environment variables -> .env.example (names, grouped, commented); ignore and create .env
   rafoflow gate                                   run the repo's gate commands
   rafoflow review [--tier S|M|L] [--yes]          review loop until convergence
   rafoflow docs [--check]                         find docs the change made untrue; update or justify each
@@ -280,6 +282,24 @@ async function main(): Promise<void> {
       work.update({ approvals: [...(state.approvals ?? []), approval] });
       work.log({ step: "approve", ...approval });
       print(`approved: ${what}`);
+      return;
+    }
+
+    case "env": {
+      const root = repoRoot(process.cwd());
+      const r = setupEnv(root, { check: values.check });
+      if (values.json) return print(JSON.stringify(r));
+      print(`stack: ${r.stacks.join(", ") || "not detected"}`);
+      print(`variables the code reads: ${r.scanned}`);
+      for (const f of r.files) print(`${f.example}: ${f.added.length ? `${values.check ? "missing" : "added"} ${f.added.join(", ")}` : "up to date"}${f.realFile === "skipped" ? "" : `; ${f.real} ${f.realFile}`}`);
+      if (r.gitignoreAdded.length) print(`.gitignore: added ${r.gitignoreAdded.join(", ")}`);
+      if (values.check) {
+        if (r.missing.length) print("fix: run `rafoflow env`, then commit the example file with the code that reads the variable");
+        process.exitCode = r.missing.length ? 1 : 0;
+        return;
+      }
+      print("fill in the values (never paste them in chat) for:");
+      r.names.forEach((n) => print(`  ${n}=`));
       return;
     }
 
